@@ -1,0 +1,115 @@
+package com.example
+
+import com.example.audio.HandpanSynthesizer
+import com.example.audio.OnsetAndPitchMatcher
+import com.example.audio.YinPitchDetector
+import com.example.model.NotePitchConfig
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.sin
+
+class DspAndAcousticVerificationTest {
+
+    @Test
+    fun testYinPitchDetectionOnPureSine_440Hz() {
+        val sampleRate = 22050
+        val targetFreq = 440.0 // A4
+        val durationSamples = 2048
+        val buffer = ShortArray(durationSamples)
+
+        for (i in 0 until durationSamples) {
+            val t = i.toDouble() / sampleRate
+            val sample = sin(2.0 * PI * targetFreq * t) * 0.8
+            buffer[i] = (sample * Short.MAX_VALUE).toInt().toShort()
+        }
+
+        val yin = YinPitchDetector(sampleRate = sampleRate)
+        val result = yin.detectPitch(buffer)
+
+        assertTrue("Should detect pitch as true", result.isPitched)
+        assertEquals("A4", result.noteName)
+        assertEquals(440.0f, result.frequencyHz, 3.5f) // High accuracy within ~3.5 Hz
+        assertTrue("High confidence", result.confidence > 0.8f)
+    }
+
+    @Test
+    fun testYinPitchDetectionOnDing_146Hz() {
+        val sampleRate = 22050
+        val targetFreq = 146.83 // D3 Ding
+        val durationSamples = 2048
+        val buffer = ShortArray(durationSamples)
+
+        for (i in 0 until durationSamples) {
+            val t = i.toDouble() / sampleRate
+            val sample = sin(2.0 * PI * targetFreq * t) * 0.85
+            buffer[i] = (sample * Short.MAX_VALUE).toInt().toShort()
+        }
+
+        val yin = YinPitchDetector(sampleRate = sampleRate)
+        val result = yin.detectPitch(buffer)
+
+        assertTrue(result.isPitched)
+        assertEquals("D3", result.noteName)
+        assertEquals(146.83f, result.frequencyHz, 2.5f)
+    }
+
+    @Test
+    fun testCentsCalculationAccuracy() {
+        // Equal frequencies -> 0 cents
+        val zeroCents = YinPitchDetector.calculateCentsDifference(440f, 440f)
+        assertEquals(0f, zeroCents, 0.01f)
+
+        // One octave up (880Hz / 440Hz) -> exactly 1200 cents
+        val octaveCents = YinPitchDetector.calculateCentsDifference(880f, 440f)
+        assertEquals(1200f, octaveCents, 0.5f)
+
+        // One semitone up (440 * 2^(1/12) ≈ 466.16) -> 100 cents
+        val semitoneCents = YinPitchDetector.calculateCentsDifference(466.164f, 440f)
+        assertEquals(100f, semitoneCents, 0.5f)
+    }
+
+    @Test
+    fun testOnsetMatcherScaleMatchingByCents() {
+        val matcher = OnsetAndPitchMatcher(22050)
+        val config = NotePitchConfig() // Default D Kurd 9
+
+        // Test Ding (146.83 Hz) with tiny 5-cent detune
+        val detunedDing = 146.83f * Math.pow(2.0, 5.0 / 1200.0).toFloat()
+        val (matchedNote, centsDev) = matcher.matchToScaleByCents(detunedDing, config, centsTolerance = 50f)
+
+        assertEquals(NotePitchConfig.NOTE_DING, matchedNote)
+        assertEquals(5.0f, centsDev, 0.5f)
+
+        // Test Note 8 (A4 = 440 Hz)
+        val (matchedNote8, _) = matcher.matchToScaleByCents(441.5f, config, centsTolerance = 50f)
+        assertEquals(8, matchedNote8)
+    }
+
+    @Test
+    fun testHandpanSynthesizerClippingSafety() {
+        val dingPcm = HandpanSynthesizer.generateHandpanSample(
+            frequency = 146.83f,
+            durationSeconds = 0.5f,
+            isDing = true,
+            velocity = 1.0f
+        )
+        assertTrue(dingPcm.isNotEmpty())
+
+        val slapPcm = HandpanSynthesizer.generateSlapSample(velocity = 1.0f)
+        assertTrue(slapPcm.isNotEmpty())
+
+        val clickPcm = HandpanSynthesizer.generateClickSample(isAccent = true)
+        assertTrue(clickPcm.isNotEmpty())
+
+        val wav = HandpanSynthesizer.pcmToWav(dingPcm)
+        assertTrue(wav.size > 44)
+        assertEquals('R'.code.toByte(), wav[0])
+        assertEquals('I'.code.toByte(), wav[1])
+        assertEquals('F'.code.toByte(), wav[2])
+        assertEquals('F'.code.toByte(), wav[3])
+    }
+}

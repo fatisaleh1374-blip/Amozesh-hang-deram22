@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <include domain="database" path="handpan_learning_db"/>
+    <include domain="sharedpref" path="handpan_prefs.xml"/>
+    <include domain="file" path="custom_handpan_samples"/>
+</full-backup-content>

@@ -1,0 +1,53 @@
+package com.example.model
+
+enum class DifficultyLevel(val persianLabel: String) {
+    BEGINNER("مقدماتی"),
+    INTERMEDIATE("متوسط"),
+    ADVANCED("پیشرفته")
+}
+
+enum class PatternCategory(val persianTitle: String, val icon: String) {
+    BEGINNER("آموزش مبتدی", "school"),
+    RHYTHM("تمرین ریتم و اسلپ", "schedule"),
+    INDEPENDENCE("استقلال دست‌ها و پارادیدل", "swap_horiz"),
+    MELODY("ملودی و قطعات", "music_note"),
+    WARM_UP("گرم‌کردن و چابکی", "fitness_center"),
+    CUSTOM("الگوهای شخصی من", "edit")
+}
+
+/**
+ * Standard data model representing a playable Handpan musical pattern / exercise.
+ */
+data class HandpanPattern(
+    val id: String,
+    val title: String,
+    val description: String,
+    val bpm: Int = 70,
+    val timeSignature: TimeSignature = TimeSignature.Common44,
+    val bars: Int = 1,
+    val events: List<NoteEvent>,
+    val difficulty: DifficultyLevel = DifficultyLevel.BEGINNER,
+    val category: PatternCategory = PatternCategory.BEGINNER,
+    val isCustom: Boolean = false,
+    val recommendedSubdivision: Subdivision = Subdivision.QUARTER
+) {
+    val totalBeats: Double
+        get() = (bars * timeSignature.beatsPerBar).toDouble()
+
+    /**
+     * Get all active non-rest note events
+     */
+    val activeNotes: List<NoteEvent>
+        get() = events.filter { !it.isRest }
+
+    /**
+     * Formats the sequence of notes as a scannable string (e.g., "D - 1 - S - 1")
+     */
+    val notesSummary: String
+        get() {
+            if (events.isEmpty()) return "خالی"
+            return events.joinToString(" - ") {
+                if (it.isRest) "𝄽" else if (it.accent) "[${it.displaySymbol}]" else it.displaySymbol
+            }
+        }
+}
