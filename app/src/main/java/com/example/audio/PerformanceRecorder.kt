@@ -67,6 +67,7 @@ class PerformanceRecorder(
 
     private val liveEvents = mutableListOf<RecordedStrikeEvent>()
     private var recordStartMs: Long = 0L
+    private var recordStartNanos: Long = 0L
     private var playbackJob: Job? = null
     private val pitchDetector = PitchDetector(clock)
 
@@ -81,6 +82,7 @@ class PerformanceRecorder(
         stopPlayback()
         liveEvents.clear()
         recordStartMs = clock.nowMillis()
+        recordStartNanos = clock.nowNanos()
         _state.update {
             it.copy(
                 isRecording = true,
@@ -92,10 +94,10 @@ class PerformanceRecorder(
             scaleConfig = scaleConfig,
             onStrikeDetected = { pitch, timestampNanos ->
                 pitch.matchedNoteNumber?.let { noteNumber ->
-                    recordStrike(
+                    recordStrikeAtMonotonicTime(
                         noteNumber = noteNumber,
                         velocity = pitch.amplitude,
-                        timestampMs = timestampNanos / 1_000_000L
+                        timestampNanos = timestampNanos
                     )
                 }
             }
@@ -121,6 +123,23 @@ class PerformanceRecorder(
             hand = hand
         )
         liveEvents.add(event)
+        _state.update { it.copy(recordingEventsCount = liveEvents.size) }
+    }
+
+    private fun recordStrikeAtMonotonicTime(
+        noteNumber: Int,
+        velocity: Float,
+        timestampNanos: Long
+    ) {
+        if (!_state.value.isRecording) return
+        val offset = ((timestampNanos - recordStartNanos) / 1_000_000L).coerceAtLeast(0L)
+        liveEvents.add(
+            RecordedStrikeEvent(
+                noteNumber = noteNumber,
+                timestampMs = offset,
+                velocity = velocity
+            )
+        )
         _state.update { it.copy(recordingEventsCount = liveEvents.size) }
     }
 
@@ -152,7 +171,7 @@ class PerformanceRecorder(
 
         val updatedTracks = listOf(track) + _state.value.tracks
         _state.update { it.copy(tracks = updatedTracks) }
-        saveTracksToStorage(updatedTracks)
+        saveTrackToStorage(track)
         return track
     }
 
@@ -254,13 +273,11 @@ class PerformanceRecorder(
         return root.toString(2)
     }
 
-    private fun saveTracksToStorage(tracks: List<RecordedTrack>) {
+    private fun saveTrackToStorage(track: RecordedTrack) {
         if (repository != null) {
             scope.launch {
                 try {
-                    for (track in tracks) {
-                        repository.saveRecordingTrack(track)
-                    }
+                    repository.saveRecordingTrack(track)
                 } catch (e: Exception) {
                     Log.e("PerformanceRecorder", "Error saving track to Room DB: ${e.message}", e)
                 }

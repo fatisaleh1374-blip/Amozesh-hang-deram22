@@ -72,14 +72,14 @@ class OnsetAndPitchMatcher(
 
         val pitchResult = yinDetector.detectPitch(buffer, readSamples)
 
-        if (!pitchResult.isPitched || pitchResult.frequencyHz <= 0f) {
+        if (!pitchResult.isPitched || pitchResult.frequencyHz <= 0f || pitchResult.confidence < 0.5f) {
             return StrikeEvaluation(
                 isStrike = hasEnergyOnset,
                 detectedFreqHz = 0f,
                 noteName = "--",
                 centsOffset = 0,
                 confidence = 0f,
-                matchedScaleNote = if (hasEnergyOnset) NotePitchConfig.NOTE_SLAP else null,
+                matchedScaleNote = null,
                 centsDeviationFromScale = 0f,
                 energy = rms,
                 onsetSampleOffset = onsetOffset
@@ -114,17 +114,7 @@ class OnsetAndPitchMatcher(
         var minAbsCents = Float.MAX_VALUE
         var bestCentsDev = Float.MAX_VALUE
 
-        // Check Ding (0)
-        val dingFreq = scaleConfig.getFrequency(NotePitchConfig.NOTE_DING)
-        val dingCents = YinPitchDetector.calculateCentsDifference(freq, dingFreq)
-        if (abs(dingCents) < minAbsCents) {
-            minAbsCents = abs(dingCents)
-            bestCentsDev = dingCents
-            bestNote = NotePitchConfig.NOTE_DING
-        }
-
-        // Check surrounding notes 1..8
-        for (i in 1..8) {
+        for (i in scaleConfig.notePitches.keys.filter { it != NotePitchConfig.NOTE_SLAP }) {
             val noteFreq = scaleConfig.getFrequency(i)
             val cents = YinPitchDetector.calculateCentsDifference(freq, noteFreq)
             if (abs(cents) < minAbsCents) {

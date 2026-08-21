@@ -1,6 +1,7 @@
 package com.example.audio
 
 import com.example.model.NoteEvent
+import com.example.model.TimeSignature
 
 /**
  * Pre-indexed time slice in a HandpanPattern.
@@ -31,7 +32,8 @@ class PatternScheduler {
             beatsPerBar: Int,
             totalBars: Int,
             startBar: Int = 1,
-            endBar: Int = totalBars
+            endBar: Int = totalBars,
+            timeSignature: TimeSignature = TimeSignature.Common44
         ): List<ScheduledTimeSlice> {
             val clampedStart = startBar.coerceIn(1, totalBars)
             val clampedEnd = endBar.coerceIn(clampedStart, totalBars)
@@ -60,7 +62,9 @@ class PatternScheduler {
             return sortedPositions.map { pos ->
                 val barIndex = (pos / beatsPerBar).toInt() + 1
                 val beatInBar = (pos % beatsPerBar) + 1.0
-                val isDownbeat = (pos % beatsPerBar) < BEAT_EPSILON
+                val beatInBarIndex = (pos % beatsPerBar).toInt() + 1
+                val isDownbeat = timeSignature.isGroupedAccent(beatInBarIndex) &&
+                    Math.abs(pos - Math.floor(pos)) < BEAT_EPSILON
 
                 val matchingEvents = events.filter {
                     Math.abs(it.beatPosition - pos) < BEAT_EPSILON

@@ -197,6 +197,7 @@ class CustomSampleRecorder(private val context: Context) {
     fun stopRecording() {
         isRecording = false
         recordingJob?.cancel()
+        recordingJob = null
         try {
             audioRecord?.stop()
             audioRecord?.release()
@@ -204,6 +205,10 @@ class CustomSampleRecorder(private val context: Context) {
             // ignore
         }
         audioRecord = null
+    }
+
+    fun release() {
+        stopRecording()
     }
 
     private fun rawPcmToWav(rawFile: File, wavFile: File, sampleRate: Int, channels: Int, bitDepth: Int) {

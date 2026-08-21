@@ -28,6 +28,13 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.example.model.HandpanNote
 import com.example.model.NotePitchConfig
@@ -76,6 +83,31 @@ fun HandpanDiscView(
             .widthIn(max = 400.dp)
             .aspectRatio(1f)
             .padding(6.dp)
+            .semantics {
+                role = Role.Image
+                contentDescription = "هنگ درام مجازی با دینگ، نت‌های ۱ تا ۸ و اسلپ"
+                stateDescription = if (effectiveActiveNote >= 0) {
+                    "نت فعال: ${if (effectiveActiveNote == 0) "دینگ" else effectiveActiveNote}"
+                } else {
+                    "بدون نت فعال"
+                }
+                customActions = listOf(
+                    CustomAccessibilityAction("نواختن دینگ") {
+                        onNoteTapped(NotePitchConfig.NOTE_DING)
+                        true
+                    },
+                    *((1..8).map { noteNumber ->
+                        CustomAccessibilityAction("نواختن نت $noteNumber") {
+                            onNoteTapped(noteNumber)
+                            true
+                        }
+                    }.toTypedArray()),
+                    CustomAccessibilityAction("نواختن اسلپ") {
+                        onNoteTapped(NotePitchConfig.NOTE_SLAP)
+                        true
+                    }
+                )
+            }
             .testTag("handpan_disc_view"),
         contentAlignment = Alignment.Center
     ) {

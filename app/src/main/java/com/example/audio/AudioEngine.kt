@@ -21,6 +21,7 @@ import java.io.FileOutputStream
 open class AudioEngine(private val context: Context? = null) {
 
     private val soundPool: SoundPool?
+    private val audioFocusManager: AudioFocusManager?
     private val loadedSoundIds = java.util.Collections.synchronizedSet(mutableSetOf<Int>())
     private val noteSoundMap = mutableMapOf<Int, Int>() // Note number (0=Ding, 1..8, 9=Slap) -> SoundPool SoundId
     private val accentSoundMap = mutableMapOf<Int, Int>() // Note number -> Accented SoundId
@@ -35,6 +36,7 @@ open class AudioEngine(private val context: Context? = null) {
     private var sampleLoadJob: Job? = null
 
     init {
+        audioFocusManager = context?.let { AudioFocusManager(it) }
         if (context != null) {
             val audioAttributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -207,6 +209,7 @@ open class AudioEngine(private val context: Context? = null) {
      */
     open fun playNote(noteNumber: Int, accent: Boolean = false, velocity: Float = 0.85f) {
         if (isMuted || (noteNumber !in 0..8 && noteNumber != NotePitchConfig.NOTE_SLAP)) return
+        if (audioFocusManager?.request() == false) return
 
         val soundId = if (accent) {
             accentSoundMap[noteNumber] ?: noteSoundMap[noteNumber]
@@ -227,6 +230,7 @@ open class AudioEngine(private val context: Context? = null) {
      */
     open fun playMetronomeClick(isAccent: Boolean) {
         if (isMuted) return
+        if (audioFocusManager?.request() == false) return
         val soundId = if (isAccent) clickAccentId else clickRegularId
         if (soundId == 0 || !loadedSoundIds.contains(soundId)) return
 
@@ -251,6 +255,7 @@ open class AudioEngine(private val context: Context? = null) {
     open fun release() {
         sampleLoadJob?.cancel()
         engineScope.cancel()
+        audioFocusManager?.abandon()
         try {
             soundPool?.release()
         } catch (_: Exception) {}

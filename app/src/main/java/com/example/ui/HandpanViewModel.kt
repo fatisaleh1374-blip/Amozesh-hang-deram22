@@ -481,6 +481,7 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
         ambienceEngine.stopAmbience()
         performanceRecorder.release()
         performanceRecorder.stopPlayback()
+        customSampleRecorder.release()
         audioEngine.release()
     }
 }

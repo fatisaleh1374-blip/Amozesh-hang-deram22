@@ -130,21 +130,6 @@ class PitchDetector(
                                 onStrikeDetected(result, exactStrikeTimestampNanos)
                             }
                         }
-                    } else if (eval.isStrike && (exactStrikeTimestampNanos - lastStrikeTimestampNanos) > 130_000_000L) {
-                        // Percussive Slap / Tak hit without tonal pitch
-                        val slapResult = DetectedPitchResult(
-                            frequencyHz = 0f,
-                            noteName = "Slap",
-                            centsOffset = 0,
-                            amplitude = (rms * 5f).coerceIn(0f, 1f),
-                            matchedNoteNumber = NotePitchConfig.NOTE_SLAP,
-                            matchedPitchDiffHz = 0f,
-                            confidence = 0.85f
-                        )
-                        lastStrikeTimestampNanos = exactStrikeTimestampNanos
-                        withContext(Dispatchers.Main) {
-                            onStrikeDetected(slapResult, exactStrikeTimestampNanos)
-                        }
                     }
 
                     lastRms = rms

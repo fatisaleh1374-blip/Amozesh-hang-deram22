@@ -203,7 +203,8 @@ class PracticeEngine(
                 beatsPerBar = beatsPerBar,
                 totalBars = pattern.bars,
                 startBar = startBar,
-                endBar = endBar
+                endBar = endBar,
+                timeSignature = pattern.timeSignature
             )
 
             if (schedule.isEmpty()) {
@@ -217,7 +218,7 @@ class PracticeEngine(
             for (slice in schedule) {
                 val sliceOffsetBeats = slice.beatPosition - loopStartBeat
                 val targetSliceNanos = loopStartNanos +
-                    MusicalTiming.beatToNanos(sliceOffsetBeats, currentBpm)
+                    MusicalTiming.beatToNanos(sliceOffsetBeats, currentBpm, pattern.timeSignature)
 
                 // Wait until monotonic timestamp for this slice
                 val waitNanos = targetSliceNanos - clock.nowNanos()

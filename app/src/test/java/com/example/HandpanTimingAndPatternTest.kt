@@ -1,12 +1,12 @@
 package com.example
 
 import com.example.audio.MetronomeEngine
+import com.example.audio.MusicalTiming
 import com.example.data.local.PatternEntity
 import com.example.model.DifficultyLevel
 import com.example.model.HandpanPattern
 import com.example.model.NoteEvent
 import com.example.model.PatternCategory
-import com.example.model.Subdivision
 import com.example.model.TimeSignature
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -58,6 +58,22 @@ class HandpanTimingAndPatternTest {
         // 60 BPM with Sixteenth subdivision (4 divs) -> 250,000,000 ns
         val sixteenthNanos = MetronomeEngine.calculateTickIntervalNanos(60, Subdivision.SIXTEENTH.divisionsPerBeat)
         assertEquals(250_000_000L, sixteenthNanos)
+    }
+
+    @Test
+    fun signatureBeatDurationUsesDenominator() {
+        assertEquals(1_000_000_000L, MusicalTiming.signatureBeatDurationNanos(60, TimeSignature.Common44))
+        assertEquals(500_000_000L, MusicalTiming.signatureBeatDurationNanos(60, TimeSignature.SixEight68))
+    }
+
+    @Test
+    fun compoundAndAsymmetricMetersExposeMusicalGrouping() {
+        assertEquals(listOf(3, 3), TimeSignature.SixEight68.grouping)
+        assertTrue(TimeSignature.SixEight68.isGroupedAccent(1))
+        assertTrue(TimeSignature.SixEight68.isGroupedAccent(4))
+        assertEquals(listOf(2, 2, 3), TimeSignature.SevenEight272.grouping)
+        assertTrue(TimeSignature.SevenEight272.isGroupedAccent(5))
+        assertFalse(TimeSignature.SevenEight272.isGroupedAccent(6))
     }
 
     @Test

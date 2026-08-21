@@ -209,6 +209,12 @@ fun AcousticAssessmentSummaryDialog(
                         modifier = Modifier.weight(1f)
                     )
                     StatCard(
+                        title = "ضربه اضافه",
+                        value = "${state.extraStrikeCount}",
+                        color = Color(0xFFBA68C8),
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatCard(
                         title = "از دست رفته",
                         value = "${state.missedCount}",
                         color = Color(0xFF9E9E9E),

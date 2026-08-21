@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.yield
 
 data class MetronomeState(
@@ -29,14 +31,15 @@ data class MetronomeState(
     val isMuted: Boolean = false,
     val hapticEnabled: Boolean = true,
     val barIndex: Int = 1,
-    val tickIndex: Long = 0L
-    val lastTickTimestampNanos: Long = 0L
+    val tickIndex: Long = 0L,
+    val lastTickTimestampNanos: Long = 0L,
     val nextTickTimestampNanos: Long = 0L
 )
 
 class MetronomeEngine(
     private val audioEngine: AudioEngine,
-    private val hapticHelper: HapticHelper? = null
+    private val hapticHelper: HapticHelper? = null,
+    private val clock: PracticeClock = PracticeClock.Default
 ) {
     private val _state = MutableStateFlow(MetronomeState())
     val state: StateFlow<MetronomeState> = _state.asStateFlow()
@@ -75,9 +78,12 @@ class MetronomeEngine(
 
     private suspend fun runMetronomeLoop() {
         var tickIndex = 0L
-        val startTimeNanos = System.nanoTime()
+        var startTimeNanos = clock.nowNanos()
+        var previousBpm = _state.value.bpm
+        var previousTimeSignature = _state.value.timeSignature
+        var previousSubdivision = _state.value.subdivision
 
-        while (true) {
+        while (currentCoroutineContext().isActive) {
             val currentState = _state.value
             val beatsPerBar = currentState.timeSignature.beatsPerBar
             val divsPerBeat = currentState.subdivision.divisionsPerBeat
@@ -87,9 +93,23 @@ class MetronomeEngine(
 
             val currentBeatIndex = (tickInBar / divsPerBeat) + 1
             val currentSubIndex = (tickInBar % divsPerBeat) + 1
-            val isDownbeat = (tickInBar == 0)
+            val isDownbeat = currentState.timeSignature.isGroupedAccent(currentBeatIndex)
             val isMainBeat = (currentSubIndex == 1)
-            val intervalNanos = calculateTickIntervalNanos(currentState.bpm, divsPerBeat)
+            if (currentState.bpm != previousBpm ||
+                currentState.timeSignature != previousTimeSignature ||
+                currentState.subdivision != previousSubdivision
+            ) {
+                startTimeNanos = clock.nowNanos()
+                tickIndex = 0L
+                previousBpm = currentState.bpm
+                previousTimeSignature = currentState.timeSignature
+                previousSubdivision = currentState.subdivision
+            }
+            val intervalNanos = calculateTickIntervalNanos(
+                currentState.bpm,
+                currentState.timeSignature,
+                divsPerBeat
+            )
             val tickTimestampNanos = startTimeNanos + (tickIndex * intervalNanos)
             val nextTargetNanos = tickTimestampNanos + intervalNanos
 
@@ -122,7 +142,7 @@ class MetronomeEngine(
 
             tickIndex++
 
-            val currentNanos = System.nanoTime()
+            val currentNanos = clock.nowNanos()
             val nanosToWait = nextTargetNanos - currentNanos
 
             if (nanosToWait > 0) {
@@ -159,7 +179,7 @@ class MetronomeEngine(
     }
 
     fun tapTempo() {
-        val now = System.currentTimeMillis()
+        val now = clock.nowMillis()
         tapTimes.add(now)
         // Keep last 4 taps within 3 seconds
         tapTimes.removeAll { now - it > 3000 }
@@ -180,6 +200,15 @@ class MetronomeEngine(
     companion object {
         fun calculateTickIntervalNanos(bpm: Int, subdivisionDivisions: Int): Long {
             return MusicalTiming.beatDurationNanos(bpm) / subdivisionDivisions.coerceAtLeast(1)
+        }
+
+        fun calculateTickIntervalNanos(
+            bpm: Int,
+            timeSignature: TimeSignature,
+            subdivisionDivisions: Int
+        ): Long {
+            return MusicalTiming.signatureBeatDurationNanos(bpm, timeSignature) /
+                subdivisionDivisions.coerceAtLeast(1)
         }
 
         fun calculateBeatIntervalMs(bpm: Int): Long {

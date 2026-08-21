@@ -16,14 +16,11 @@
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable
 
-# Room Database keep rules
--keep class androidx.room.RoomDatabase { *; }
+# Room generates direct references to the database and entity classes. Kotlin
+# domain and audio classes are not reflected over and should remain shrinkable.
+-keep class com.example.data.local.AppDatabase { *; }
+-keep @androidx.room.Entity class * { *; }
 -dontwarn androidx.room.paging.**
-
-# Application domain models and local database entities
--keep class com.example.data.local.** { *; }
--keep class com.example.model.** { *; }
--keep class com.example.audio.** { *; }
 
 # Optimization and annotation preservation
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod

@@ -349,7 +349,28 @@ class RealHandpanArchitectureTestSuite {
     }
 
     @Test
-    fun test25_expiresUnmatchedExpectedEventAsMissed() {
+    fun test25_reportsWrongNoteWithoutDestroyingPerfectTiming() {
+        val pattern = HandpanPattern(
+            id = "wrong_perfect",
+            title = "Wrong but on time",
+            description = "independent axes",
+            bpm = 60,
+            bars = 1,
+            events = listOf(NoteEvent(noteNumber = 0, beatPosition = 0.0))
+        )
+        evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
+        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+
+        val result = evaluator.evaluateDetectedPitch(261.63f, 0.95f)
+
+        assertEquals(StrikeAccuracyStatus.WRONG_NOTE, result?.status)
+        assertEquals(TimingAccuracyStatus.PERFECT, result?.timingStatus)
+        assertEquals(100f, evaluator.state.value.timingAccuracyPercentage, 0.01f)
+        assertEquals(0f, evaluator.state.value.noteAccuracyPercentage, 0.01f)
+    }
+
+    @Test
+    fun test26_expiresUnmatchedExpectedEventAsMissed() {
         val pattern = HandpanPattern(
             id = "missed",
             title = "Missed",
@@ -365,5 +386,54 @@ class RealHandpanArchitectureTestSuite {
 
         assertEquals(1, evaluator.state.value.missedCount)
         assertEquals(1, evaluator.state.value.totalStrikesEvaluated)
+    }
+
+    @Test
+    fun test27_simultaneousTargetRequiresEachExpectedNote() {
+        val pattern = HandpanPattern(
+            id = "chord",
+            title = "Chord",
+            description = "simultaneous notes",
+            bpm = 60,
+            bars = 1,
+            events = listOf(
+                NoteEvent(noteNumber = 0, beatPosition = 0.0),
+                NoteEvent(noteNumber = 1, beatPosition = 0.0)
+            )
+        )
+        evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
+        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+
+        val first = evaluator.evaluateDetectedPitch(146.83f, 0.95f)
+        val second = evaluator.evaluateDetectedPitch(220.0f, 0.95f)
+
+        assertEquals(StrikeAccuracyStatus.PERFECT, first?.status)
+        assertEquals(StrikeAccuracyStatus.PERFECT, second?.status)
+        assertEquals(2, evaluator.state.value.perfectCount)
+        assertEquals(2, evaluator.state.value.totalStrikesEvaluated)
+    }
+
+    @Test
+    fun test28_partialChordOnlyMissesRemainingObligation() {
+        val pattern = HandpanPattern(
+            id = "partial_chord",
+            title = "Partial chord",
+            description = "remaining note should be missed",
+            bpm = 60,
+            bars = 1,
+            events = listOf(
+                NoteEvent(noteNumber = 0, beatPosition = 0.0),
+                NoteEvent(noteNumber = 1, beatPosition = 0.0)
+            )
+        )
+        evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
+        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+        evaluator.evaluateDetectedPitch(146.83f, 0.95f)
+        fakeClock.advanceMs(200)
+        evaluator.notifyExpectedSlice(emptyList(), fakeClock.currentNanos)
+
+        assertEquals(1, evaluator.state.value.perfectCount)
+        assertEquals(1, evaluator.state.value.missedCount)
+        assertEquals(2, evaluator.state.value.totalStrikesEvaluated)
     }
 }

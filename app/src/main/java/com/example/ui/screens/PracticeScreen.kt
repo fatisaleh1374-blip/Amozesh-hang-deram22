@@ -58,6 +58,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -143,12 +144,19 @@ fun PracticeScreen(
     }
 
     // Acoustic Assessment Result Summary Dialog
-    if (acousticState.isSummaryDialogVisible) {
-        // Auto-save lesson progress if current pattern belongs to a master lesson
+    LaunchedEffect(
+        acousticState.isSummaryDialogVisible,
+        pattern.id,
+        acousticState.totalStrikesEvaluated
+    ) {
+        if (!acousticState.isSummaryDialogVisible) return@LaunchedEffect
         val matchedLesson = com.example.ui.components.MASTER_LESSONS.find { it.patternId == pattern.id }
         if (matchedLesson != null) {
             viewModel.saveLessonResult(matchedLesson.id, acousticState.accuracyPercentage.toInt())
         }
+    }
+
+    if (acousticState.isSummaryDialogVisible) {
 
         AcousticAssessmentSummaryDialog(
             state = acousticState,
@@ -375,6 +383,7 @@ fun PracticeScreen(
                                 StrikeAccuracyStatus.LATE -> Color(0xFFFF7043)
                                 StrikeAccuracyStatus.WRONG_NOTE -> Color(0xFFE91E63)
                                 StrikeAccuracyStatus.MISSED -> Color(0xFFF44336)
+                                StrikeAccuracyStatus.EXTRA_STRIKE -> Color(0xFFBA68C8)
                                 else -> Color.Gray
                             }
 
@@ -385,6 +394,7 @@ fun PracticeScreen(
                                 StrikeAccuracyStatus.LATE -> "کمی دیر (Late) 🐢"
                                 StrikeAccuracyStatus.WRONG_NOTE -> "نت اشتباه ❌"
                                 StrikeAccuracyStatus.MISSED -> "از دست رفته (Miss) ⚠️"
+                                StrikeAccuracyStatus.EXTRA_STRIKE -> "ضربه اضافه؛ روی الگو بمانید"
                                 else -> "در انتظار ضربه ساز واقعی..."
                             }
 

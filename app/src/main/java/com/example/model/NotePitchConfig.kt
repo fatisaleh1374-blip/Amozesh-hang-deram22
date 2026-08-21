@@ -116,6 +116,19 @@ data class NotePitchConfig(
             NOTE_SLAP to NotePitch(NOTE_SLAP, "Slap / Tak (ضربه اسلپ)", 0.0f, "S")
         )
 
+        val C_MAJOR_9_PITCHES = mapOf(
+            NOTE_DING to NotePitch(NOTE_DING, "C4 (دینگ)", 261.63f, "D"),
+            1 to NotePitch(1, "G4 (نت ۱)", 392.00f, "1"),
+            2 to NotePitch(2, "A4 (نت ۲)", 440.00f, "2"),
+            3 to NotePitch(3, "C5 (نت ۳)", 523.25f, "3"),
+            4 to NotePitch(4, "D5 (نت ۴)", 587.33f, "4"),
+            5 to NotePitch(5, "E5 (نت ۵)", 659.25f, "5"),
+            6 to NotePitch(6, "G5 (نت ۶)", 783.99f, "6"),
+            7 to NotePitch(7, "A5 (نت ۷)", 880.00f, "7"),
+            8 to NotePitch(8, "C6 (نت ۸)", 1046.50f, "8"),
+            NOTE_SLAP to NotePitch(NOTE_SLAP, "Slap / Tak (ضربه اسلپ)", 0.0f, "S")
+        )
+
         // D Integral 9: Ding (D3) + 8 notes
         val D_INTEGRAL_9_PITCHES = mapOf(
             NOTE_DING to NotePitch(NOTE_DING, "D3 (دینگ)", 146.83f, "D"),
@@ -136,6 +149,7 @@ data class NotePitchConfig(
         val C_MINOR_PYGMY_9 = NotePitchConfig("C Minor Pygmy 9", C_MINOR_PYGMY_9_PITCHES)
         val D_HIJAZ_9 = NotePitchConfig("D Hijaz 9 (شرقی / قره‌داغ)", D_HIJAZ_9_PITCHES)
         val D_INTEGRAL_9 = NotePitchConfig("D Integral 9 (عمیق و ژرف)", D_INTEGRAL_9_PITCHES)
+        val C_MAJOR_9 = NotePitchConfig("C Major 9 (ماژور)", C_MAJOR_9_PITCHES)
 
         val SCALES = listOf(
             D_KURD_9,
@@ -143,7 +157,8 @@ data class NotePitchConfig(
             E_PYGMY_9,
             C_MINOR_PYGMY_9,
             D_HIJAZ_9,
-            D_INTEGRAL_9
+            D_INTEGRAL_9,
+            C_MAJOR_9
         )
     }
 }
