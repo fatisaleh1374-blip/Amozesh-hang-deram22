@@ -73,6 +73,9 @@ class PerformanceRecorder(
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
 
+    val isCapturingAcousticInput: Boolean
+        get() = _state.value.isRecording
+
     init {
         loadTracksFromStorage()
     }
@@ -126,7 +129,7 @@ class PerformanceRecorder(
         _state.update { it.copy(recordingEventsCount = liveEvents.size) }
     }
 
-    private fun recordStrikeAtMonotonicTime(
+    fun recordStrikeAtMonotonicTime(
         noteNumber: Int,
         velocity: Float,
         timestampNanos: Long

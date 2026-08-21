@@ -211,6 +211,9 @@ class AcousticPracticeEvaluator(
     }
 
     fun stopAssessment(showSummary: Boolean = true) {
+        // Ending a session closes every still-pending target; there will be no later strike
+        // or expected slice to advance the evaluator past its miss window.
+        finalizePendingEvents()
         pitchDetector.stopListening()
         _state.update {
             it.copy(
@@ -297,7 +300,17 @@ class AcousticPracticeEvaluator(
         var targetNanos = expectedBeatTargetTimestampNanos
         var currentExpected = expectedNoteEvents
         val pendingMatch = pendingExpectedEvents
-            .filter { it.lifecycle == ExpectedEventLifecycle.EXPECTED || it.lifecycle == ExpectedEventLifecycle.WAITING }
+            .asSequence()
+            .filter {
+                (it.lifecycle == ExpectedEventLifecycle.EXPECTED || it.lifecycle == ExpectedEventLifecycle.WAITING) &&
+                    it.remainingEvents.isNotEmpty()
+            }
+            .filter {
+                abs(strikeTimestampNanos - it.targetTimestampNanos) <= timingProfile.ignoreAfterMs * 1_000_000L
+            }
+            .sortedWith(compareBy<PendingExpectedEvent> {
+                abs(strikeTimestampNanos - it.targetTimestampNanos)
+            }.thenBy { it.targetTimestampNanos })
             .firstOrNull()
 
         val isWithinTargetWindow = pendingMatch != null &&
@@ -387,6 +400,17 @@ class AcousticPracticeEvaluator(
             registerMissedNote(it.remainingEvents.map(NoteEvent::noteNumber), it.targetTimestampNanos)
         }
         pendingExpectedEvents.removeAll(expired.toSet())
+    }
+
+    private fun finalizePendingEvents() {
+        val pending = pendingExpectedEvents.toList()
+        pending.forEach { event ->
+            event.lifecycle = ExpectedEventLifecycle.MISSED
+            registerMissedNote(event.remainingEvents.map(NoteEvent::noteNumber), event.targetTimestampNanos)
+        }
+        pendingExpectedEvents.clear()
+        expectedNoteEvents = emptyList()
+        expectedBeatTargetTimestampNanos = 0L
     }
 
     private fun registerMissedNote(expectedNotes: List<Int>, expectedTimestampNanos: Long) {

@@ -8,6 +8,7 @@ import com.example.audio.StrikeAccuracyStatus
 import com.example.data.builtin.BuiltinExercises
 import com.example.model.HandpanPattern
 import com.example.model.NotePitchConfig
+import com.example.model.NoteEvent
 import com.example.model.PracticeInputMode
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -118,6 +119,32 @@ class RealHandpanArchitectureTestSuite {
         val result = evaluator.evaluateDetectedPitch(174.6f, 0.9f)
         assertNotNull(result)
         assertEquals(StrikeAccuracyStatus.WRONG_NOTE, result?.status)
+    }
+
+    @Test
+    fun test05b_fastFractionalTargetsChooseNearestExpectedEvent() {
+        val pattern = HandpanPattern(
+            id = "fractional_targets",
+            title = "Fractional targets",
+            description = "nearest target matching",
+            bpm = 120,
+            events = listOf(
+                NoteEvent(noteNumber = 0, beatPosition = 0.0),
+                NoteEvent(noteNumber = 1, beatPosition = 0.25)
+            )
+        )
+        evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 120)
+        val firstTarget = fakeClock.currentNanos
+        evaluator.notifyExpectedSlice(listOf(pattern.events[0]), firstTarget)
+        val secondTarget = firstTarget + 125_000_000L
+        evaluator.notifyExpectedSlice(listOf(pattern.events[1]), secondTarget)
+
+        val result = evaluator.evaluateDetectedPitch(220.0f, 0.9f, secondTarget)
+
+        assertEquals(StrikeAccuracyStatus.PERFECT, result?.status)
+        assertEquals(0L, result?.deviationMs)
+        assertEquals(listOf(1), result?.expectedNotes)
+        assertEquals(1, result?.detectedNote)
     }
 
     // 6. Early hit registration

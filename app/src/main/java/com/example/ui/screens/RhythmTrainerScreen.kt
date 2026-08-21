@@ -161,7 +161,7 @@ fun RhythmTrainerScreen(
             return
         }
 
-        val tapNanos = System.nanoTime()
+        val tapNanos = viewModel.metronomeEngine.nowNanos()
         val tick = viewModel.metronomeEngine.state.value
         lastTargetBeatNanos = tick.lastTickTimestampNanos
         nextTargetBeatNanos = tick.nextTickTimestampNanos

@@ -112,12 +112,14 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
             }
         }
         practiceEngine.acousticEvaluator.onStrikeDetected = { pitch, timestampNanos ->
-            pitch.matchedNoteNumber?.let { noteNumber ->
-                performanceRecorder.recordStrike(
-                    noteNumber = noteNumber,
-                    velocity = pitch.amplitude,
-                    timestampMs = timestampNanos / 1_000_000L
-                )
+            if (!performanceRecorder.isCapturingAcousticInput) {
+                pitch.matchedNoteNumber?.let { noteNumber ->
+                    performanceRecorder.recordStrikeAtMonotonicTime(
+                        noteNumber = noteNumber,
+                        velocity = pitch.amplitude,
+                        timestampNanos = timestampNanos
+                    )
+                }
             }
         }
 

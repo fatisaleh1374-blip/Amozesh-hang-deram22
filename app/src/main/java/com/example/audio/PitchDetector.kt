@@ -108,27 +108,28 @@ class PitchDetector(
                     // Sub-frame timestamp based on sample offset
                     val exactStrikeTimestampNanos = nowNanos - ((readSamples - eval.onsetSampleOffset) * 1_000_000_000L / SAMPLE_RATE)
 
-                    if (eval.detectedFreqHz > 0f) {
-                        val result = DetectedPitchResult(
-                            frequencyHz = eval.detectedFreqHz,
-                            noteName = eval.noteName,
-                            centsOffset = eval.centsOffset,
-                            amplitude = (rms * 5f).coerceIn(0f, 1f),
-                            matchedNoteNumber = eval.matchedScaleNote,
-                            matchedPitchDiffHz = eval.centsDeviationFromScale,
-                            confidence = eval.confidence
-                        )
+                    val result = DetectedPitchResult(
+                        frequencyHz = eval.detectedFreqHz,
+                        noteName = eval.noteName,
+                        centsOffset = eval.centsOffset,
+                        amplitude = (rms * 5f).coerceIn(0f, 1f),
+                        matchedNoteNumber = eval.matchedScaleNote,
+                        matchedPitchDiffHz = eval.centsDeviationFromScale,
+                        confidence = eval.confidence
+                    )
 
+                    if (eval.detectedFreqHz > 0f) {
                         withContext(Dispatchers.Main) {
                             onContinuousPitch(result)
                         }
+                    }
 
-                        // Refractory window of 130ms (130,000,000 ns) for distinct strikes
-                        if (eval.isStrike && (exactStrikeTimestampNanos - lastStrikeTimestampNanos) > 130_000_000L) {
-                            lastStrikeTimestampNanos = exactStrikeTimestampNanos
-                            withContext(Dispatchers.Main) {
-                                onStrikeDetected(result, exactStrikeTimestampNanos)
-                            }
+                    // Refractory window of 130ms (130,000,000 ns) for distinct strikes.
+                    // Keep unpitched onsets: the evaluator must score them instead of hiding them.
+                    if (eval.isStrike && (exactStrikeTimestampNanos - lastStrikeTimestampNanos) > 130_000_000L) {
+                        lastStrikeTimestampNanos = exactStrikeTimestampNanos
+                        withContext(Dispatchers.Main) {
+                            onStrikeDetected(result, exactStrikeTimestampNanos)
                         }
                     }
 

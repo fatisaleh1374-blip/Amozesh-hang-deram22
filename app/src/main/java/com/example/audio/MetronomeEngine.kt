@@ -178,6 +178,8 @@ class MetronomeEngine(
         _state.update { it.copy(hapticEnabled = enabled) }
     }
 
+    fun nowNanos(): Long = clock.nowNanos()
+
     fun tapTempo() {
         val now = clock.nowMillis()
         tapTimes.add(now)

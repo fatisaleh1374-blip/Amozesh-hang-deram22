@@ -90,6 +90,26 @@ class DspAndAcousticVerificationTest {
     }
 
     @Test
+    fun testOnsetMatcherKeepsUnpitchedEnergyOnsetAsStrike() {
+        val matcher = OnsetAndPitchMatcher(22050)
+        val impulse = ShortArray(2048)
+        impulse[0] = (Short.MAX_VALUE * 0.9f).toInt().toShort()
+
+        val result = matcher.processFrame(
+            buffer = impulse,
+            readSamples = impulse.size,
+            rms = 0.02f,
+            lastRms = 0f,
+            scaleConfig = NotePitchConfig()
+        )
+
+        assertTrue(result.isStrike)
+        assertEquals(0f, result.detectedFreqHz, 0.01f)
+        assertEquals(0f, result.confidence, 0.01f)
+        assertEquals(null, result.matchedScaleNote)
+    }
+
+    @Test
     fun testHandpanSynthesizerClippingSafety() {
         val dingPcm = HandpanSynthesizer.generateHandpanSample(
             frequency = 146.83f,
