@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.audio.RecordedStrikeEvent
 import com.example.audio.RecordedTrack
+import com.example.model.StrikeClassification
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -59,6 +60,8 @@ data class RecordingTrackEntity(
                 obj.put("timestampMs", e.timestampMs)
                 obj.put("velocity", e.velocity.toDouble())
                 obj.put("isAccent", e.isAccent)
+                obj.put("classification", e.classification.name)
+                obj.put("confidence", e.confidence)
                 e.durationMs?.let { obj.put("durationMs", it) }
                 e.hand?.let { obj.put("hand", it) }
                 array.put(obj)
@@ -79,7 +82,11 @@ data class RecordingTrackEntity(
                             velocity = obj.optDouble("velocity", 0.85).toFloat(),
                             isAccent = obj.optBoolean("isAccent", false),
                             durationMs = if (obj.has("durationMs")) obj.optLong("durationMs") else null,
-                            hand = if (obj.has("hand")) obj.optString("hand") else null
+                            hand = if (obj.has("hand")) obj.optString("hand") else null,
+                            classification = runCatching {
+                                StrikeClassification.valueOf(obj.optString("classification", StrikeClassification.CORRECT_NOTE.name))
+                            }.getOrDefault(StrikeClassification.CORRECT_NOTE),
+                            confidence = obj.optDouble("confidence", 1.0).toFloat()
                         )
                     )
                 }

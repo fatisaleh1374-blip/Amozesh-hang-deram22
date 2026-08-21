@@ -5,6 +5,9 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.AmbienceEngine
+import com.example.audio.AcousticPracticeEvaluator
+import com.example.audio.AudioAnalysisSession
+import com.example.model.AssessmentTimeline
 import com.example.audio.AudioEngine
 import com.example.audio.CustomSampleRecorder
 import com.example.audio.MetronomeEngine
@@ -82,9 +85,26 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
     val hapticHelper = HapticHelper(context)
     val audioEngine = AudioEngine(context)
     val metronomeEngine = MetronomeEngine(audioEngine, hapticHelper)
-    val practiceEngine = PracticeEngine(audioEngine, hapticHelper)
+    private val audioAnalysisSession = AudioAnalysisSession()
+    private val assessmentTimeline = AssessmentTimeline()
+    val practiceEngine = PracticeEngine(
+        audioEngine = audioEngine,
+        hapticHelper = hapticHelper,
+        acousticEvaluator = AcousticPracticeEvaluator(
+            analysisSession = audioAnalysisSession,
+            ownsAnalysisSession = false,
+            timeline = assessmentTimeline
+        )
+    )
     val ambienceEngine = AmbienceEngine()
-    val performanceRecorder = PerformanceRecorder(context, audioEngine, repository)
+    val performanceRecorder = PerformanceRecorder(
+        context = context,
+        audioEngine = audioEngine,
+        repository = repository,
+        analysisSession = audioAnalysisSession,
+        ownsAnalysisSession = false,
+        timeline = assessmentTimeline
+    )
     private val customSampleRecorder = CustomSampleRecorder(context)
 
     private val _appUiState = MutableStateFlow(AppUiState())
@@ -111,18 +131,6 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
                 repository.recordPracticeSession(pattern.id, bpm, elapsedSeconds)
             }
         }
-        practiceEngine.acousticEvaluator.onStrikeDetected = { pitch, timestampNanos ->
-            if (!performanceRecorder.isCapturingAcousticInput) {
-                pitch.matchedNoteNumber?.let { noteNumber ->
-                    performanceRecorder.recordStrikeAtMonotonicTime(
-                        noteNumber = noteNumber,
-                        velocity = pitch.amplitude,
-                        timestampNanos = timestampNanos
-                    )
-                }
-            }
-        }
-
         val prefs = context.getSharedPreferences("handpan_prefs", Context.MODE_PRIVATE)
         val isFirstLaunch = prefs.getBoolean("is_first_launch", true)
         val savedTheme = prefs.getBoolean("dark_theme", true)
@@ -482,6 +490,7 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
         metronomeEngine.stop()
         ambienceEngine.stopAmbience()
         performanceRecorder.release()
+        audioAnalysisSession.close()
         performanceRecorder.stopPlayback()
         customSampleRecorder.release()
         audioEngine.release()

@@ -382,6 +382,7 @@ fun PracticeScreen(
                                 StrikeAccuracyStatus.EARLY -> Color(0xFFFFA726)
                                 StrikeAccuracyStatus.LATE -> Color(0xFFFF7043)
                                 StrikeAccuracyStatus.WRONG_NOTE -> Color(0xFFE91E63)
+                                StrikeAccuracyStatus.UNKNOWN_NOTE -> Color(0xFFFFC107)
                                 StrikeAccuracyStatus.MISSED -> Color(0xFFF44336)
                                 StrikeAccuracyStatus.EXTRA_STRIKE -> Color(0xFFBA68C8)
                                 else -> Color.Gray
@@ -393,6 +394,7 @@ fun PracticeScreen(
                                 StrikeAccuracyStatus.EARLY -> "کمی زود (Early) ⚡"
                                 StrikeAccuracyStatus.LATE -> "کمی دیر (Late) 🐢"
                                 StrikeAccuracyStatus.WRONG_NOTE -> "نت اشتباه ❌"
+                                StrikeAccuracyStatus.UNKNOWN_NOTE -> "ضربه تشخیص داده شد، اما نت نامشخص است"
                                 StrikeAccuracyStatus.MISSED -> "از دست رفته (Miss) ⚠️"
                                 StrikeAccuracyStatus.EXTRA_STRIKE -> "ضربه اضافه؛ روی الگو بمانید"
                                 else -> "در انتظار ضربه ساز واقعی..."

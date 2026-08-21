@@ -4,6 +4,10 @@ import android.content.Context
 import android.util.Log
 import com.example.model.NoteEvent
 import com.example.model.NotePitchConfig
+import com.example.model.DetectedStrikeEvent
+import com.example.model.StrikeClassification
+import com.example.model.AssessmentTimeline
+import com.example.model.AssessmentTimelineEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,6 +34,7 @@ data class RecordedTrack(
     val scaleId: String,
     val durationMs: Long,
     val events: List<RecordedStrikeEvent>,
+    val timelineEvents: List<AssessmentTimelineEvent> = emptyList(),
     val bpm: Int = 70,
     val timeSignature: String = "4/4"
 )
@@ -40,7 +45,9 @@ data class RecordedStrikeEvent(
     val velocity: Float = 0.85f,
     val isAccent: Boolean = false,
     val durationMs: Long? = null,
-    val hand: String? = null
+    val hand: String? = null,
+    val classification: StrikeClassification = StrikeClassification.CORRECT_NOTE,
+    val confidence: Float = 1.0f
 )
 
 data class RecorderState(
@@ -60,7 +67,10 @@ class PerformanceRecorder(
     private val context: Context,
     private val audioEngine: AudioEngine,
     private val repository: com.example.data.repository.HandpanRepository? = null,
-    private val clock: PracticeClock = PracticeClock.Default
+    private val clock: PracticeClock = PracticeClock.Default,
+    private val analysisSession: AudioAnalysisSession = AudioAnalysisSession(),
+    private val ownsAnalysisSession: Boolean = true,
+    val timeline: AssessmentTimeline = AssessmentTimeline()
 ) {
     private val _state = MutableStateFlow(RecorderState())
     val state: StateFlow<RecorderState> = _state.asStateFlow()
@@ -69,7 +79,9 @@ class PerformanceRecorder(
     private var recordStartMs: Long = 0L
     private var recordStartNanos: Long = 0L
     private var playbackJob: Job? = null
-    private val pitchDetector = PitchDetector(clock)
+    private var analysisSubscription: AudioAnalysisSession.Subscription? = null
+    private var timelineSubscription: AssessmentTimeline.Subscription? = null
+    private val liveTimelineEvents = mutableListOf<AssessmentTimelineEvent>()
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
 
@@ -84,6 +96,7 @@ class PerformanceRecorder(
         if (_state.value.isRecording) return
         stopPlayback()
         liveEvents.clear()
+        liveTimelineEvents.clear()
         recordStartMs = clock.nowMillis()
         recordStartNanos = clock.nowNanos()
         _state.update {
@@ -93,18 +106,33 @@ class PerformanceRecorder(
                 recordingEventsCount = 0
             )
         }
-        pitchDetector.startListening(
+        timelineSubscription?.close()
+        timelineSubscription = timeline.subscribe { event ->
+            if (_state.value.isRecording && event.sessionId.isNotBlank()) {
+                liveTimelineEvents += event
+            }
+        }
+        analysisSubscription = analysisSession.acquire(
             scaleConfig = scaleConfig,
-            onStrikeDetected = { pitch, timestampNanos ->
-                pitch.matchedNoteNumber?.let { noteNumber ->
-                    recordStrikeAtMonotonicTime(
-                        noteNumber = noteNumber,
-                        velocity = pitch.amplitude,
-                        timestampNanos = timestampNanos
-                    )
-                }
+            onStrike = { event ->
+                recordDetectedStrike(event)
             }
         )
+    }
+
+    private fun recordDetectedStrike(event: DetectedStrikeEvent) {
+        if (!_state.value.isRecording) return
+        val offset = ((event.monotonicTimestampNanos - recordStartNanos) / 1_000_000L).coerceAtLeast(0L)
+        liveEvents.add(
+            RecordedStrikeEvent(
+                noteNumber = event.detectedNote ?: -1,
+                timestampMs = offset,
+                velocity = event.energy,
+                classification = if (event.pitchValid) StrikeClassification.CORRECT_NOTE else StrikeClassification.UNKNOWN_NOTE,
+                confidence = event.pitchConfidence
+            )
+        )
+        _state.update { it.copy(recordingEventsCount = liveEvents.size) }
     }
 
     fun recordStrike(
@@ -113,7 +141,9 @@ class PerformanceRecorder(
         velocity: Float = 0.85f,
         timestampMs: Long = clock.nowMillis(),
         durationMs: Long? = null,
-        hand: String? = null
+        hand: String? = null,
+        classification: StrikeClassification = StrikeClassification.CORRECT_NOTE,
+        confidence: Float = 1.0f
     ) {
         if (!_state.value.isRecording) return
         val offset = (timestampMs - recordStartMs).coerceAtLeast(0L)
@@ -123,7 +153,9 @@ class PerformanceRecorder(
             velocity = velocity,
             isAccent = isAccent,
             durationMs = durationMs,
-            hand = hand
+            hand = hand,
+            classification = classification,
+            confidence = confidence
         )
         liveEvents.add(event)
         _state.update { it.copy(recordingEventsCount = liveEvents.size) }
@@ -153,7 +185,10 @@ class PerformanceRecorder(
         timeSignature: String = "4/4"
     ): RecordedTrack? {
         if (!_state.value.isRecording) return null
-        pitchDetector.stopListening()
+        analysisSubscription?.close()
+        analysisSubscription = null
+        timelineSubscription?.close()
+        timelineSubscription = null
         val duration = clock.nowMillis() - recordStartMs
         _state.update { it.copy(isRecording = false) }
 
@@ -168,6 +203,7 @@ class PerformanceRecorder(
             scaleId = scaleName,
             durationMs = duration.coerceAtLeast(500L),
             events = ArrayList(liveEvents),
+            timelineEvents = liveTimelineEvents.toList(),
             bpm = bpm,
             timeSignature = timeSignature
         )
@@ -194,7 +230,9 @@ class PerformanceRecorder(
                     if (delta > 0) {
                         delay(delta)
                     }
-                    audioEngine.playNote(evt.noteNumber, evt.isAccent, evt.velocity)
+                    if (evt.noteNumber >= 0) {
+                        audioEngine.playNote(evt.noteNumber, evt.isAccent, evt.velocity)
+                    }
                     lastTime = evt.timestampMs
                 }
 
@@ -218,11 +256,14 @@ class PerformanceRecorder(
 
     fun release() {
         if (_state.value.isRecording) {
-            pitchDetector.stopListening()
+            analysisSubscription?.close()
+            analysisSubscription = null
+            timelineSubscription?.close()
+            timelineSubscription = null
             _state.update { it.copy(isRecording = false) }
         }
         stopPlayback()
-        pitchDetector.release()
+        if (ownsAnalysisSession) analysisSession.close()
         scope.cancel()
     }
 
@@ -268,6 +309,8 @@ class PerformanceRecorder(
             evObj.put("timestampMs", e.timestampMs)
             evObj.put("velocity", e.velocity)
             evObj.put("isAccent", e.isAccent)
+            evObj.put("classification", e.classification.name)
+            evObj.put("confidence", e.confidence)
             e.durationMs?.let { evObj.put("durationMs", it) }
             e.hand?.let { evObj.put("hand", it) }
             eventsArray.put(evObj)

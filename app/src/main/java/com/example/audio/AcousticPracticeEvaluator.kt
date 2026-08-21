@@ -3,6 +3,19 @@ package com.example.audio
 import com.example.model.HandpanPattern
 import com.example.model.NoteEvent
 import com.example.model.NotePitchConfig
+import com.example.model.DetectedStrikeEvent
+import com.example.model.StrikeClassification
+import com.example.model.TimingResult
+import com.example.model.TimingStatus
+import com.example.model.PracticeScoreCalculator
+import com.example.model.ScoreCounters
+import com.example.model.AssessmentEventType
+import com.example.model.AssessmentTimeline
+import com.example.model.AssessmentTimelineEvent
+import com.example.model.MusicalTarget
+import com.example.model.MusicalTargetIdentity
+import com.example.model.MusicalTargetMatcher
+import com.example.model.TargetMatchType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,6 +28,7 @@ enum class StrikeAccuracyStatus {
     EARLY,      // -160ms to -90ms
     LATE,       // +90ms to +160ms
     WRONG_NOTE, // correct timing window but incorrect note
+    UNKNOWN_NOTE,
     EXTRA_STRIKE,
     MISSED      // no strike detected within window
 }
@@ -54,7 +68,32 @@ data class StrikeFeedback(
     val confidence: Float,
     val expectedTimestampNanos: Long,
     val monotonicTimestampNanos: Long,
-    val noteCorrect: Boolean
+    val noteCorrect: Boolean,
+    val classification: StrikeClassification = when (status) {
+        StrikeAccuracyStatus.PERFECT,
+        StrikeAccuracyStatus.GOOD,
+        StrikeAccuracyStatus.EARLY,
+        StrikeAccuracyStatus.LATE -> StrikeClassification.CORRECT_NOTE
+        StrikeAccuracyStatus.WRONG_NOTE -> StrikeClassification.WRONG_NOTE
+        StrikeAccuracyStatus.UNKNOWN_NOTE -> StrikeClassification.UNKNOWN_NOTE
+        StrikeAccuracyStatus.EXTRA_STRIKE -> StrikeClassification.EXTRA_STRIKE
+        StrikeAccuracyStatus.MISSED -> StrikeClassification.MISSED_NOTE
+    },
+    val timingResult: TimingResult? = if (status == StrikeAccuracyStatus.EXTRA_STRIKE || status == StrikeAccuracyStatus.MISSED) {
+        null
+    } else {
+        TimingResult(
+            status = when (timingStatus) {
+                TimingAccuracyStatus.PERFECT -> TimingStatus.PERFECT
+                TimingAccuracyStatus.GOOD -> TimingStatus.GOOD
+                TimingAccuracyStatus.EARLY -> TimingStatus.EARLY
+                TimingAccuracyStatus.LATE -> TimingStatus.LATE
+                TimingAccuracyStatus.MISSED,
+                TimingAccuracyStatus.UNKNOWN -> TimingStatus.GOOD
+            },
+            deviationMs = deviationMs
+        )
+    }
 )
 
 data class AcousticAssessmentState(
@@ -72,13 +111,14 @@ data class AcousticAssessmentState(
     val earlyCount: Int = 0,
     val lateCount: Int = 0,
     val wrongNoteCount: Int = 0,
+    val unknownNoteCount: Int = 0,
     val wrongNoteTimingPoints: Int = 0,
     val extraStrikeCount: Int = 0,
     val missedCount: Int = 0,
     // Separate Metrics
-    val timingAccuracyPercentage: Float = 100f,
-    val noteAccuracyPercentage: Float = 100f,
-    val accuracyPercentage: Float = 100f, // Combined overall
+    val timingAccuracyPercentage: Float = 0f,
+    val noteAccuracyPercentage: Float = 0f,
+    val accuracyPercentage: Float = 0f, // Combined overall
     val averageTimingDeviationMs: Float = 0f,
     val consistencyPercentage: Float = 100f,
     val isSummaryDialogVisible: Boolean = false
@@ -105,7 +145,9 @@ data class AcousticAssessmentState(
  */
 class AcousticPracticeEvaluator(
     private val clock: PracticeClock = PracticeClock.Default,
-    private val pitchDetector: PitchDetector = PitchDetector()
+    private val analysisSession: AudioAnalysisSession = AudioAnalysisSession(),
+    private val ownsAnalysisSession: Boolean = true,
+    val timeline: AssessmentTimeline = AssessmentTimeline()
 ) {
     private val _state = MutableStateFlow(AcousticAssessmentState())
     val state: StateFlow<AcousticAssessmentState> = _state.asStateFlow()
@@ -116,6 +158,11 @@ class AcousticPracticeEvaluator(
     private var assessmentStartTimestampNanos: Long = 0L
     private var beatDurationNanos: Long = 500_000_000L
     private var timingProfile = TimingProfile()
+    private var analysisSubscription: AudioAnalysisSession.Subscription? = null
+    private var assessmentSessionId: String = ""
+    private var targetSequence = 0
+    private var activeLoopId: String = "loop-0"
+    private val targetMatcher = MusicalTargetMatcher()
 
     // Current expected target note events and monotonic window timestamp in nanoseconds
     @Volatile
@@ -127,12 +174,13 @@ class AcousticPracticeEvaluator(
     private data class PendingExpectedEvent(
         val events: List<NoteEvent>,
         val targetTimestampNanos: Long,
+        val targetId: String,
+        val sequenceIndex: Int,
         val remainingEvents: MutableList<NoteEvent> = events.toMutableList(),
         var lifecycle: ExpectedEventLifecycle = ExpectedEventLifecycle.EXPECTED
     )
     private val pendingExpectedEvents = mutableListOf<PendingExpectedEvent>()
-
-    var onStrikeDetected: ((DetectedPitchResult, Long) -> Unit)? = null
+    private val processedStrikeIds = mutableSetOf<String>()
 
     fun setScaleConfig(config: NotePitchConfig) {
         this.scaleConfig = config
@@ -149,6 +197,11 @@ class AcousticPracticeEvaluator(
     fun startAssessment(pattern: HandpanPattern, scaleConfig: NotePitchConfig, bpm: Int = pattern.bpm) {
         this.activePattern = pattern
         this.scaleConfig = scaleConfig
+        assessmentSessionId = "assessment-${pattern.id}-${clock.nowNanos()}"
+        targetSequence = 0
+        activeLoopId = "loop-0"
+        targetMatcher.clear()
+        timeline.clear()
         beatDurationNanos = MusicalTiming.beatDurationNanos(bpm)
         resetStats()
 
@@ -161,7 +214,8 @@ class AcousticPracticeEvaluator(
             )
         }
 
-        pitchDetector.startListening(
+        analysisSubscription?.close()
+        analysisSubscription = analysisSession.acquire(
             scaleConfig = scaleConfig,
             onContinuousPitch = { pitch ->
                 _state.update {
@@ -173,8 +227,8 @@ class AcousticPracticeEvaluator(
                     )
                 }
             },
-            onStrikeDetected = { pitch, monotonicTimestampNanos ->
-                handleStrikeDetected(pitch, monotonicTimestampNanos)
+            onStrike = { event ->
+                handleStrikeDetected(event)
             }
         )
     }
@@ -188,25 +242,27 @@ class AcousticPracticeEvaluator(
         confidence: Float = 0.9f,
         timestampNanos: Long = clock.nowNanos()
     ): StrikeFeedback? {
-        if (confidence < 0.5f) {
-            return null
-        }
-
         val matcher = OnsetAndPitchMatcher(22050)
         val (matchedNote, centsDev) = matcher.matchToScaleByCents(frequencyHz, scaleConfig)
         val (noteName, cents) = YinPitchDetector.frequencyToNoteAndCents(frequencyHz)
 
-        val pitchResult = DetectedPitchResult(
-            frequencyHz = frequencyHz,
-            noteName = noteName,
-            centsOffset = cents,
-            amplitude = 0.85f,
-            matchedNoteNumber = matchedNote,
-            matchedPitchDiffHz = centsDev,
-            confidence = confidence
+        handleStrikeDetected(
+            DetectedStrikeEvent(
+                id = "manual-$timestampNanos-$frequencyHz-$confidence",
+                sessionId = "manual",
+                monotonicTimestampNanos = timestampNanos,
+                detectedFrequencyHz = frequencyHz,
+                detectedNoteName = noteName,
+                detectedCentsOffset = cents,
+                detectedNote = matchedNote,
+                matchedPitchDiffHz = centsDev,
+                pitchConfidence = confidence,
+                onsetStrength = 0.85f,
+                energy = 0.85f,
+                pitchValid = matchedNote != null && confidence >= 0.5f,
+                source = "manual"
+            )
         )
-
-        handleStrikeDetected(pitchResult, timestampNanos)
         return _state.value.lastFeedback
     }
 
@@ -214,7 +270,9 @@ class AcousticPracticeEvaluator(
         // Ending a session closes every still-pending target; there will be no later strike
         // or expected slice to advance the evaluator past its miss window.
         finalizePendingEvents()
-        pitchDetector.stopListening()
+        analysisSubscription?.close()
+        analysisSubscription = null
+        if (ownsAnalysisSession) analysisSession.close()
         _state.update {
             it.copy(
                 isEnabled = false,
@@ -225,15 +283,17 @@ class AcousticPracticeEvaluator(
     }
 
     fun release() {
-        pitchDetector.release()
-        onStrikeDetected = null
+        analysisSubscription?.close()
+        analysisSubscription = null
+        if (ownsAnalysisSession) analysisSession.close()
     }
 
     fun toggleEnabled() {
         val willEnable = !_state.value.isEnabled
         _state.update { it.copy(isEnabled = willEnable) }
         if (!willEnable) {
-            pitchDetector.stopListening()
+            analysisSubscription?.close()
+            analysisSubscription = null
             _state.update { it.copy(isListening = false) }
         }
     }
@@ -248,6 +308,8 @@ class AcousticPracticeEvaluator(
         expectedBeatTargetTimestampNanos = 0L
         strikeProcessedForCurrentBeat = false
         pendingExpectedEvents.clear()
+        processedStrikeIds.clear()
+        targetMatcher.clear()
 
         _state.update {
             it.copy(
@@ -258,12 +320,13 @@ class AcousticPracticeEvaluator(
                 earlyCount = 0,
                 lateCount = 0,
                 wrongNoteCount = 0,
+                unknownNoteCount = 0,
                 wrongNoteTimingPoints = 0,
                 extraStrikeCount = 0,
                 missedCount = 0,
-                timingAccuracyPercentage = 100f,
-                noteAccuracyPercentage = 100f,
-                accuracyPercentage = 100f,
+                timingAccuracyPercentage = 0f,
+                noteAccuracyPercentage = 0f,
+                accuracyPercentage = 0f,
                 averageTimingDeviationMs = 0f,
                 lastFeedback = null,
                 isSummaryDialogVisible = false
@@ -274,14 +337,65 @@ class AcousticPracticeEvaluator(
     /**
      * Called by PracticeEngine on each slice with monotonic timestamp in nanoseconds.
      */
-    fun notifyExpectedSlice(events: List<NoteEvent>, targetTimestampNanos: Long) {
+    @Synchronized
+    fun notifyExpectedSlice(
+        events: List<NoteEvent>,
+        targetTimestampNanos: Long,
+        loopId: String = activeLoopId
+    ) {
         if (!_state.value.isEnabled || !_state.value.isListening) return
 
         val activeEvents = events.filter { !it.isRest }
 
-        expirePendingEvents(targetTimestampNanos)
+        expirePendingEvents(clock.nowNanos())
         if (activeEvents.isNotEmpty()) {
-            pendingExpectedEvents += PendingExpectedEvent(activeEvents, targetTimestampNanos)
+            activeLoopId = loopId
+            val sequenceIndex = targetSequence++
+            val targetId = "$assessmentSessionId-target-$sequenceIndex"
+            pendingExpectedEvents += PendingExpectedEvent(
+                events = activeEvents,
+                targetTimestampNanos = targetTimestampNanos,
+                targetId = targetId,
+                sequenceIndex = sequenceIndex
+            )
+            targetMatcher.addTarget(
+                MusicalTarget(
+                    identity = MusicalTargetIdentity(
+                        sessionId = assessmentSessionId,
+                        patternId = activePattern?.id ?: "unknown",
+                        loopId = activeLoopId,
+                        sequenceIndex = sequenceIndex,
+                        targetId = targetId,
+                        beatIndex = targetSequence - 1,
+                        subdivisionIndex = 0,
+                        expectedTimestampNanos = targetTimestampNanos,
+                        expectedNotes = activeEvents.map(NoteEvent::noteNumber).toSet(),
+                        chordId = targetId
+                    )
+                )
+            )
+            activeEvents.forEachIndexed { index, event ->
+                timeline.append(
+                    AssessmentTimelineEvent(
+                        eventId = "$targetId-expected-$index",
+                        sessionId = assessmentSessionId,
+                        loopId = activeLoopId,
+                        sequenceIndex = sequenceIndex,
+                        expectedNote = event.noteNumber,
+                        detectedNote = null,
+                        eventType = AssessmentEventType.EXPECTED,
+                        expectedTimestampNanos = targetTimestampNanos,
+                        detectedTimestampNanos = null,
+                        deviationNanos = null,
+                        timingResult = null,
+                        confidence = 0f,
+                        targetId = targetId,
+                        source = "practice-pattern",
+                        durationNanos = null,
+                        isConsumed = false
+                    )
+                )
+            }
             expectedNoteEvents = activeEvents
             expectedBeatTargetTimestampNanos = targetTimestampNanos
             strikeProcessedForCurrentBeat = false
@@ -292,53 +406,39 @@ class AcousticPracticeEvaluator(
         }
     }
 
-    private fun handleStrikeDetected(pitch: DetectedPitchResult, strikeTimestampNanos: Long) {
+    @Synchronized
+    private fun handleStrikeDetected(event: DetectedStrikeEvent) {
         if (!_state.value.isEnabled || !_state.value.isListening) return
 
-        onStrikeDetected?.invoke(pitch, strikeTimestampNanos)
+        if (!processedStrikeIds.add(event.id)) return
 
-        var targetNanos = expectedBeatTargetTimestampNanos
-        var currentExpected = expectedNoteEvents
-        val pendingMatch = pendingExpectedEvents
-            .asSequence()
-            .filter {
-                (it.lifecycle == ExpectedEventLifecycle.EXPECTED || it.lifecycle == ExpectedEventLifecycle.WAITING) &&
-                    it.remainingEvents.isNotEmpty()
-            }
-            .filter {
-                abs(strikeTimestampNanos - it.targetTimestampNanos) <= timingProfile.ignoreAfterMs * 1_000_000L
-            }
-            .sortedWith(compareBy<PendingExpectedEvent> {
-                abs(strikeTimestampNanos - it.targetTimestampNanos)
-            }.thenBy { it.targetTimestampNanos })
-            .firstOrNull()
+        val pitch = event.toPitchResult()
+        val strikeTimestampNanos = event.monotonicTimestampNanos
 
-        val isWithinTargetWindow = pendingMatch != null &&
-            abs(strikeTimestampNanos - pendingMatch.targetTimestampNanos) <= timingProfile.ignoreAfterMs * 1_000_000L
-
-        if (isWithinTargetWindow) {
-            pendingMatch.lifecycle = ExpectedEventLifecycle.WAITING
-            targetNanos = pendingMatch.targetTimestampNanos
-            currentExpected = pendingMatch.remainingEvents
-        }
-
-        if (!isWithinTargetWindow || currentExpected.isEmpty()) {
+        val decision = targetMatcher.match(event, activeLoopId, assessmentSessionId)
+        if (decision.type == TargetMatchType.EXTRA || decision.target == null) {
             registerExtraStrike(pitch, strikeTimestampNanos)
             return
         }
 
+        val pendingMatch = pendingExpectedEvents.firstOrNull {
+            it.targetId == decision.target.identity.targetId
+        }
+        val targetNanos = decision.target.identity.expectedTimestampNanos
+        val currentExpected = decision.target.remainingNotes
+        val isWithinTargetWindow = true
         val deviationNanos = strikeTimestampNanos - targetNanos
         val deviationMs = deviationNanos / 1_000_000L
 
         // If strike occurred way outside reasonable beat window (> 250ms), ignore as noise or stray tap
         if (abs(deviationMs) > timingProfile.ignoreAfterMs) return
 
-        val expectedNoteNumbers = currentExpected.map { it.noteNumber }
-        val isPitchMatch = pitch.matchedNoteNumber != null &&
-            expectedNoteNumbers.contains(pitch.matchedNoteNumber)
+        val expectedNoteNumbers = currentExpected.toList()
+        val isPitchMatch = decision.type == TargetMatchType.CORRECT
 
         val status = when {
-            !isPitchMatch -> StrikeAccuracyStatus.WRONG_NOTE
+            decision.type == TargetMatchType.UNKNOWN -> StrikeAccuracyStatus.UNKNOWN_NOTE
+            decision.type == TargetMatchType.WRONG -> StrikeAccuracyStatus.WRONG_NOTE
             abs(deviationMs) <= timingProfile.perfectMs -> StrikeAccuracyStatus.PERFECT
             abs(deviationMs) <= timingProfile.goodMs -> StrikeAccuracyStatus.GOOD
             deviationMs < -timingProfile.goodMs -> StrikeAccuracyStatus.EARLY
@@ -354,10 +454,8 @@ class AcousticPracticeEvaluator(
         strikeProcessedForCurrentBeat = true
         pendingMatch?.let {
             val matchedEvent = if (isPitchMatch) {
-                it.remainingEvents.firstOrNull { event -> event.noteNumber == pitch.matchedNoteNumber }
-            } else {
-                it.remainingEvents.firstOrNull()
-            }
+                it.events.firstOrNull { event -> event.noteNumber == pitch.matchedNoteNumber }
+            } else null
             matchedEvent?.let(it.remainingEvents::remove)
             if (it.remainingEvents.isEmpty()) {
                 it.lifecycle = ExpectedEventLifecycle.MATCHED
@@ -386,34 +484,77 @@ class AcousticPracticeEvaluator(
             noteCorrect = isPitchMatch
         )
 
+        val eventType = when (status) {
+            StrikeAccuracyStatus.PERFECT,
+            StrikeAccuracyStatus.GOOD,
+            StrikeAccuracyStatus.EARLY,
+            StrikeAccuracyStatus.LATE -> AssessmentEventType.CORRECT
+            StrikeAccuracyStatus.WRONG_NOTE -> AssessmentEventType.WRONG
+            StrikeAccuracyStatus.UNKNOWN_NOTE -> AssessmentEventType.UNKNOWN
+            StrikeAccuracyStatus.EXTRA_STRIKE -> AssessmentEventType.EXTRA
+            StrikeAccuracyStatus.MISSED -> AssessmentEventType.MISSED
+        }
+        timeline.append(
+            AssessmentTimelineEvent(
+                eventId = "${event.id}-assessment",
+                sessionId = event.sessionId,
+                loopId = "loop-0",
+                sequenceIndex = pendingMatch?.sequenceIndex ?: targetSequence,
+                expectedNote = expectedNoteNumbers.firstOrNull(),
+                detectedNote = event.detectedNote,
+                eventType = eventType,
+                expectedTimestampNanos = if (isWithinTargetWindow) targetNanos else null,
+                detectedTimestampNanos = strikeTimestampNanos,
+                deviationNanos = if (isWithinTargetWindow) deviationNanos else null,
+                timingResult = feedback.timingResult,
+                confidence = event.pitchConfidence,
+                targetId = pendingMatch?.targetId,
+                source = event.source,
+                durationNanos = event.durationNanos,
+                isConsumed = isPitchMatch
+            )
+        )
+
         updateStatsWithFeedback(feedback, isPitchMatch, abs(deviationMs))
     }
 
     private fun expirePendingEvents(nowNanos: Long) {
-        val missWindowNanos = timingProfile.missMs * 1_000_000L
-        val expired = pendingExpectedEvents.filter {
-            it.lifecycle != ExpectedEventLifecycle.MATCHED &&
-                nowNanos - it.targetTimestampNanos > missWindowNanos
+        val finalized = targetMatcher.finalize(nowNanos)
+        finalized.forEach { decision ->
+            val target = decision.target ?: return@forEach
+            registerMissedNote(
+                expectedNotes = target.remainingNotes.toList(),
+                expectedTimestampNanos = target.identity.expectedTimestampNanos,
+                targetId = target.identity.targetId,
+                sequenceIndex = target.identity.sequenceIndex
+            )
+            pendingExpectedEvents.removeAll { it.targetId == target.identity.targetId }
         }
-        expired.forEach {
-            it.lifecycle = ExpectedEventLifecycle.MISSED
-            registerMissedNote(it.remainingEvents.map(NoteEvent::noteNumber), it.targetTimestampNanos)
-        }
-        pendingExpectedEvents.removeAll(expired.toSet())
     }
 
+    @Synchronized
     private fun finalizePendingEvents() {
-        val pending = pendingExpectedEvents.toList()
-        pending.forEach { event ->
-            event.lifecycle = ExpectedEventLifecycle.MISSED
-            registerMissedNote(event.remainingEvents.map(NoteEvent::noteNumber), event.targetTimestampNanos)
+        val finalized = targetMatcher.finalize(Long.MAX_VALUE)
+        finalized.forEach { decision ->
+            val target = decision.target ?: return@forEach
+            registerMissedNote(
+                expectedNotes = target.remainingNotes.toList(),
+                expectedTimestampNanos = target.identity.expectedTimestampNanos,
+                targetId = target.identity.targetId,
+                sequenceIndex = target.identity.sequenceIndex
+            )
         }
         pendingExpectedEvents.clear()
         expectedNoteEvents = emptyList()
         expectedBeatTargetTimestampNanos = 0L
     }
 
-    private fun registerMissedNote(expectedNotes: List<Int>, expectedTimestampNanos: Long) {
+    private fun registerMissedNote(
+        expectedNotes: List<Int>,
+        expectedTimestampNanos: Long,
+        targetId: String? = null,
+        sequenceIndex: Int = targetSequence
+    ) {
         val feedback = StrikeFeedback(
             status = StrikeAccuracyStatus.MISSED,
             timingStatus = TimingAccuracyStatus.MISSED,
@@ -427,25 +568,55 @@ class AcousticPracticeEvaluator(
             monotonicTimestampNanos = clock.nowNanos(),
             noteCorrect = false
         )
+        expectedNotes.forEachIndexed { index, noteNumber ->
+            timeline.append(
+                AssessmentTimelineEvent(
+                    eventId = "$assessmentSessionId-missed-${expectedTimestampNanos}-$index",
+                    sessionId = assessmentSessionId,
+                    loopId = "loop-0",
+                    sequenceIndex = sequenceIndex,
+                    expectedNote = noteNumber,
+                    detectedNote = null,
+                    eventType = AssessmentEventType.MISSED,
+                    expectedTimestampNanos = expectedTimestampNanos,
+                    detectedTimestampNanos = clock.nowNanos(),
+                    deviationNanos = null,
+                    timingResult = null,
+                    confidence = 0f,
+                    targetId = targetId,
+                    source = "evaluator",
+                    durationNanos = null,
+                    isConsumed = false
+                )
+            )
+        }
         _state.update {
             val newMissed = it.missedCount + expectedNotes.size
             val newTotal = it.totalStrikesEvaluated + expectedNotes.size
 
             val timingScore = (it.perfectCount * 100) + (it.goodCount * 80) +
                 (it.earlyCount * 50) + (it.lateCount * 50) + it.wrongNoteTimingPoints
-            val timingAcc = (timingScore.toFloat() / (newTotal * 100f).coerceAtLeast(1f)) * 100f
-
-            val noteHits = it.perfectCount + it.goodCount + it.earlyCount + it.lateCount
-            val noteAcc = (noteHits.toFloat() / (newTotal).coerceAtLeast(1).toFloat()) * 100f
-
-            val overall = (timingAcc * 0.5f + noteAcc * 0.5f).coerceIn(0f, 100f)
+            val score = PracticeScoreCalculator.calculate(
+                ScoreCounters(
+                    correctCount = it.perfectCount + it.goodCount + it.earlyCount + it.lateCount,
+                    wrongCount = it.wrongNoteCount,
+                    unknownCount = it.unknownNoteCount,
+                    missedCount = newMissed,
+                    extraCount = it.extraStrikeCount,
+                    perfectCount = it.perfectCount,
+                    goodCount = it.goodCount,
+                    earlyCount = it.earlyCount,
+                    lateCount = it.lateCount,
+                    nonCorrectTimingPoints = it.wrongNoteTimingPoints
+                )
+            )
 
             it.copy(
                 missedCount = newMissed,
                 totalStrikesEvaluated = newTotal,
-                timingAccuracyPercentage = timingAcc.coerceIn(0f, 100f),
-                noteAccuracyPercentage = noteAcc.coerceIn(0f, 100f),
-                accuracyPercentage = overall,
+                timingAccuracyPercentage = score.timingAccuracyPercentage,
+                noteAccuracyPercentage = score.noteAccuracyPercentage,
+                accuracyPercentage = score.overallAccuracyPercentage,
                 consistencyPercentage = calculateConsistency(),
                 lastFeedback = feedback
             )
@@ -466,6 +637,26 @@ class AcousticPracticeEvaluator(
             monotonicTimestampNanos = timestampNanos,
             noteCorrect = false
         )
+        timeline.append(
+            AssessmentTimelineEvent(
+                eventId = "extra-$timestampNanos-${pitch.frequencyHz}",
+                sessionId = assessmentSessionId,
+                loopId = "loop-0",
+                sequenceIndex = targetSequence,
+                expectedNote = null,
+                detectedNote = pitch.matchedNoteNumber,
+                eventType = AssessmentEventType.EXTRA,
+                expectedTimestampNanos = null,
+                detectedTimestampNanos = timestampNanos,
+                deviationNanos = null,
+                timingResult = null,
+                confidence = pitch.confidence,
+                targetId = null,
+                source = "evaluator",
+                durationNanos = null,
+                isConsumed = false
+            )
+        )
         _state.update {
             it.copy(
                 totalStrikesEvaluated = it.totalStrikesEvaluated + 1,
@@ -482,6 +673,7 @@ class AcousticPracticeEvaluator(
             var early = current.earlyCount
             var late = current.lateCount
             var wrong = current.wrongNoteCount
+            var unknown = current.unknownNoteCount
             var wrongTimingPoints = current.wrongNoteTimingPoints
 
             when (feedback.status) {
@@ -490,19 +682,28 @@ class AcousticPracticeEvaluator(
                 StrikeAccuracyStatus.EARLY -> early++
                 StrikeAccuracyStatus.LATE -> late++
                 StrikeAccuracyStatus.WRONG_NOTE -> wrong++
+                StrikeAccuracyStatus.UNKNOWN_NOTE -> unknown++
                 StrikeAccuracyStatus.MISSED -> {}
             }
 
-            val totalEvaluated = perfect + good + early + late + wrong + current.missedCount + current.extraStrikeCount
-            if (feedback.status == StrikeAccuracyStatus.WRONG_NOTE) {
+            val totalEvaluated = perfect + good + early + late + wrong + unknown + current.missedCount + current.extraStrikeCount
+            if (feedback.status == StrikeAccuracyStatus.WRONG_NOTE || feedback.status == StrikeAccuracyStatus.UNKNOWN_NOTE) {
                 wrongTimingPoints += timingPoints(feedback.timingStatus)
             }
-            val timingScore = (perfect * 100) + (good * 80) + (early * 50) + (late * 50) + wrongTimingPoints
-            val timingAcc = (timingScore.toFloat() / (totalEvaluated * 100f).coerceAtLeast(1f)) * 100f
-
-            val noteHits = perfect + good + early + late
-            val noteAcc = (noteHits.toFloat() / totalEvaluated.coerceAtLeast(1).toFloat()) * 100f
-            val overall = (timingAcc * 0.5f + noteAcc * 0.5f).coerceIn(0f, 100f)
+            val score = PracticeScoreCalculator.calculate(
+                ScoreCounters(
+                    correctCount = perfect + good + early + late,
+                    wrongCount = wrong,
+                    unknownCount = unknown,
+                    missedCount = current.missedCount,
+                    extraCount = current.extraStrikeCount,
+                    perfectCount = perfect,
+                    goodCount = good,
+                    earlyCount = early,
+                    lateCount = late,
+                    nonCorrectTimingPoints = wrongTimingPoints
+                )
+            )
 
             val avgDeviation = if (timingWindowList.isNotEmpty()) {
                 timingWindowList.average().toFloat()
@@ -515,10 +716,11 @@ class AcousticPracticeEvaluator(
                 earlyCount = early,
                 lateCount = late,
                 wrongNoteCount = wrong,
+                unknownNoteCount = unknown,
                 wrongNoteTimingPoints = wrongTimingPoints,
-                timingAccuracyPercentage = timingAcc.coerceIn(0f, 100f),
-                noteAccuracyPercentage = noteAcc.coerceIn(0f, 100f),
-                accuracyPercentage = overall,
+                timingAccuracyPercentage = score.timingAccuracyPercentage,
+                noteAccuracyPercentage = score.noteAccuracyPercentage,
+                accuracyPercentage = score.overallAccuracyPercentage,
                 consistencyPercentage = calculateConsistency(absDeviation),
                 averageTimingDeviationMs = avgDeviation,
                 lastFeedback = feedback

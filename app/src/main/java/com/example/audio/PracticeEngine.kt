@@ -220,6 +220,14 @@ class PracticeEngine(
                 val targetSliceNanos = loopStartNanos +
                     MusicalTiming.beatToNanos(sliceOffsetBeats, currentBpm, pattern.timeSignature)
 
+                if (acousticEvaluator.state.value.isEnabled) {
+                    acousticEvaluator.notifyExpectedSlice(
+                        events = slice.events,
+                        targetTimestampNanos = targetSliceNanos,
+                        loopId = "loop-$currentLoopIteration"
+                    )
+                }
+
                 // Wait until monotonic timestamp for this slice
                 val waitNanos = targetSliceNanos - clock.nowNanos()
                 if (waitNanos > 0) {
@@ -273,10 +281,6 @@ class PracticeEngine(
                     )
                 }
 
-                // Notify Acoustic Live Evaluator with unified monotonic timestamp
-                if (acousticEvaluator.state.value.isEnabled) {
-                    acousticEvaluator.notifyExpectedSlice(slice.events, targetSliceNanos)
-                }
             }
 
             currentLoopIteration++

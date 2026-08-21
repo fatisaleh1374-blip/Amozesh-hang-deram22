@@ -204,7 +204,7 @@ fun AcousticAssessmentSummaryDialog(
                     )
                     StatCard(
                         title = "نت اشتباه/نامفهوم",
-                        value = "${state.wrongNoteCount}",
+                        value = "${state.wrongNoteCount + state.unknownNoteCount}",
                         color = Color(0xFFEF5350),
                         modifier = Modifier.weight(1f)
                     )

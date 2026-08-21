@@ -10,6 +10,9 @@ import com.example.model.HandpanPattern
 import com.example.model.NotePitchConfig
 import com.example.model.NoteEvent
 import com.example.model.PracticeInputMode
+import com.example.model.StrikeClassification
+import com.example.model.AssessmentEventType
+import com.example.model.AssessmentTimeline
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -268,8 +271,86 @@ class RealHandpanArchitectureTestSuite {
     fun test18_evaluatorHandlesLowConfidenceNoise() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
         val result = evaluator.evaluateDetectedPitch(146.83f, 0.2f) // below confidence threshold
-        // Should not register as a valid strike
-        assertEquals(null, result)
+        assertEquals(StrikeAccuracyStatus.EXTRA_STRIKE, result?.status)
+        assertEquals(0, evaluator.state.value.unknownNoteCount)
+    }
+
+    @Test
+    fun test29_unknownStrikeWithinTargetIsNotSilentlyDropped() {
+        evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        evaluator.notifyExpectedSlice(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
+
+        val result = evaluator.evaluateDetectedPitch(146.83f, 0.2f)
+
+        assertEquals(StrikeAccuracyStatus.UNKNOWN_NOTE, result?.status)
+        assertEquals(1, evaluator.state.value.unknownNoteCount)
+        evaluator.stopAssessment(showSummary = false)
+        assertEquals(1, evaluator.state.value.missedCount)
+    }
+
+    @Test
+    fun test30_wrongStrikeDoesNotConsumeExpectedTarget() {
+        val expected = testPattern.events.first { !it.isRest }
+        evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        evaluator.notifyExpectedSlice(listOf(expected), fakeClock.currentNanos)
+
+        val wrong = evaluator.evaluateDetectedPitch(261.63f, 0.95f)
+        val correct = evaluator.evaluateDetectedPitch(146.83f, 0.95f)
+
+        assertEquals(StrikeAccuracyStatus.WRONG_NOTE, wrong?.status)
+        assertEquals(StrikeAccuracyStatus.PERFECT, correct?.status)
+        assertEquals(1, evaluator.state.value.wrongNoteCount)
+        assertEquals(1, evaluator.state.value.perfectCount)
+        assertEquals(0, evaluator.state.value.missedCount)
+    }
+
+    @Test
+    fun test31_futureTargetsAreNotExpiredDuringLookahead() {
+        val first = testPattern.events.first { !it.isRest }
+        val second = testPattern.events.drop(1).first { !it.isRest }
+        evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+
+        evaluator.notifyExpectedSlice(listOf(first), fakeClock.currentNanos + 1_000_000_000L)
+        evaluator.notifyExpectedSlice(listOf(second), fakeClock.currentNanos + 2_000_000_000L)
+
+        assertEquals(0, evaluator.state.value.missedCount)
+
+        fakeClock.advanceMs(1_200)
+        evaluator.notifyExpectedSlice(emptyList(), fakeClock.currentNanos)
+
+        assertEquals(1, evaluator.state.value.missedCount)
+    }
+
+    @Test
+    fun test33_duplicateStrikeWithSameTimestampIsEvaluatedOnce() {
+        val expected = testPattern.events.first { !it.isRest }
+        evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        evaluator.notifyExpectedSlice(listOf(expected), fakeClock.currentNanos)
+
+        val first = evaluator.evaluateDetectedPitch(146.83f, 0.95f, fakeClock.currentNanos)
+        val duplicate = evaluator.evaluateDetectedPitch(146.83f, 0.95f, fakeClock.currentNanos)
+
+        assertEquals(StrikeAccuracyStatus.PERFECT, first?.status)
+        assertEquals(StrikeAccuracyStatus.PERFECT, duplicate?.status)
+        assertEquals(1, evaluator.state.value.perfectCount)
+        assertEquals(1, evaluator.state.value.totalStrikesEvaluated)
+    }
+
+    @Test
+    fun test34_evaluatorPublishesExpectedAndClassifiedEventsToCanonicalTimeline() {
+        val timeline = AssessmentTimeline()
+        evaluator = AcousticPracticeEvaluator(clock = fakeClock, timeline = timeline)
+        val expected = testPattern.events.first { !it.isRest }
+
+        evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        evaluator.notifyExpectedSlice(listOf(expected), fakeClock.currentNanos)
+        evaluator.evaluateDetectedPitch(146.83f, 0.95f, fakeClock.currentNanos)
+
+        assertEquals(
+            listOf(AssessmentEventType.EXPECTED, AssessmentEventType.CORRECT),
+            timeline.snapshot().map { it.eventType }
+        )
+        assertEquals(1, timeline.snapshot().count { it.isConsumed })
     }
 
     // 19. All builtin patterns have valid notes
@@ -326,6 +407,24 @@ class RealHandpanArchitectureTestSuite {
         assertEquals(1, track?.events?.size)
         assertEquals(3, track?.events?.first()?.noteNumber)
         assertEquals("R", track?.events?.first()?.hand)
+        recorder.release()
+    }
+
+    @Test
+    fun test32_performanceRecorderKeepsUnknownStrikeTimelineEvent() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val recorder = PerformanceRecorder(context, fakeAudio)
+
+        recorder.startRecording()
+        recorder.recordStrike(
+            noteNumber = -1,
+            classification = StrikeClassification.UNKNOWN_NOTE,
+            confidence = 0.2f
+        )
+        val track = recorder.stopRecording(scaleName = "D Kurd")
+
+        assertEquals(StrikeClassification.UNKNOWN_NOTE, track?.events?.single()?.classification)
+        assertEquals(0.2f, track?.events?.single()?.confidence ?: 0f, 0.001f)
         recorder.release()
     }
 
