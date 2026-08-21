@@ -39,7 +39,7 @@ enum class AssessmentEventType {
 data class AssessmentTimelineEvent(
     val eventId: String,
     val sessionId: String,
-    val loopId: String,
+    val loopId: String?,
     val sequenceIndex: Int,
     val expectedNote: Int?,
     val detectedNote: Int?,
@@ -52,8 +52,22 @@ data class AssessmentTimelineEvent(
     val targetId: String?,
     val source: String,
     val durationNanos: Long?,
-    val isConsumed: Boolean
+    val isConsumed: Boolean,
+    val assessmentSessionId: String = sessionId,
+    val patternId: String? = null,
+    val obligationId: String? = null,
+    val expectedNotes: Set<Int> = expectedNote?.let { setOf(it) } ?: emptySet(),
+    val classification: StrikeClassification? = eventType.toStrikeClassification()
 )
+
+private fun AssessmentEventType.toStrikeClassification(): StrikeClassification = when (this) {
+    AssessmentEventType.EXPECTED -> StrikeClassification.NO_STRIKE
+    AssessmentEventType.CORRECT -> StrikeClassification.CORRECT_NOTE
+    AssessmentEventType.WRONG -> StrikeClassification.WRONG_NOTE
+    AssessmentEventType.UNKNOWN -> StrikeClassification.UNKNOWN_NOTE
+    AssessmentEventType.MISSED -> StrikeClassification.MISSED_NOTE
+    AssessmentEventType.EXTRA -> StrikeClassification.EXTRA_STRIKE
+}
 
 class AssessmentTimeline {
     private val events = mutableListOf<AssessmentTimelineEvent>()

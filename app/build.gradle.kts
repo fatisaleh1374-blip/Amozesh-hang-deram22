@@ -72,6 +72,11 @@ android {
   }
 }
 
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+  arg("room.incremental", "true")
+}
+
 gradle.taskGraph.whenReady {
   val isReleaseTask = allTasks.any { task ->
     task.name.contains("Release", ignoreCase = true) && task.path.startsWith(":app:")

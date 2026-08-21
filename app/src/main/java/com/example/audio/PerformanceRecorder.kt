@@ -84,6 +84,7 @@ class PerformanceRecorder(
     private val liveTimelineEvents = mutableListOf<AssessmentTimelineEvent>()
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
+    private val deadlineScheduler = DeadlineScheduler(clock)
 
     val isCapturingAcousticInput: Boolean
         get() = _state.value.isRecording
@@ -125,8 +126,8 @@ class PerformanceRecorder(
         val offset = ((event.monotonicTimestampNanos - recordStartNanos) / 1_000_000L).coerceAtLeast(0L)
         liveEvents.add(
             RecordedStrikeEvent(
-                noteNumber = event.detectedNote ?: -1,
-                timestampMs = offset,
+                            val eventOffsetNanos = (evt.timestampMs / speed * 1_000_000L).toLong()
+                            deadlineScheduler.await(recordStartNanos + eventOffsetNanos)
                 velocity = event.energy,
                 classification = if (event.pitchValid) StrikeClassification.CORRECT_NOTE else StrikeClassification.UNKNOWN_NOTE,
                 confidence = event.pitchConfidence
@@ -135,7 +136,7 @@ class PerformanceRecorder(
         _state.update { it.copy(recordingEventsCount = liveEvents.size) }
     }
 
-    fun recordStrike(
+                            deadlineScheduler.await(recordStartNanos + (track.durationMs / speed * 1_000_000L).toLong())
         noteNumber: Int,
         isAccent: Boolean = false,
         velocity: Float = 0.85f,
@@ -223,13 +224,12 @@ class PerformanceRecorder(
             val isLoop = _state.value.isLooping
 
             do {
+                val playbackStartNanos = clock.nowNanos()
                 var lastTime = 0L
                 for (evt in track.events) {
                     if (!isActive) break
-                    val delta = ((evt.timestampMs - lastTime) / speed).toLong()
-                    if (delta > 0) {
-                        delay(delta)
-                    }
+                    val eventOffsetNanos = (evt.timestampMs / speed * 1_000_000L).toLong()
+                    deadlineScheduler.await(playbackStartNanos + eventOffsetNanos)
                     if (evt.noteNumber >= 0) {
                         audioEngine.playNote(evt.noteNumber, evt.isAccent, evt.velocity)
                     }
@@ -238,7 +238,7 @@ class PerformanceRecorder(
 
                 val remainingTail = ((track.durationMs - lastTime).toFloat() / speed).toLong().coerceAtLeast(0L)
                 if (remainingTail > 0 && isActive) {
-                    delay(remainingTail)
+                    deadlineScheduler.await(playbackStartNanos + (track.durationMs / speed * 1_000_000L).toLong())
                 }
             } while (isLoop && isActive)
 

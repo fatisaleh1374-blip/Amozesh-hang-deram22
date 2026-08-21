@@ -47,6 +47,7 @@ class MetronomeEngine(
     private var metronomeJob: Job? = null
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val tapTimes = mutableListOf<Long>()
+    private val deadlineScheduler = DeadlineScheduler(clock)
 
     fun togglePlay() {
         if (_state.value.isPlaying) {
@@ -145,15 +146,7 @@ class MetronomeEngine(
             val currentNanos = clock.nowNanos()
             val nanosToWait = nextTargetNanos - currentNanos
 
-            if (nanosToWait > 0) {
-                val millis = nanosToWait / 1_000_000L
-                val remainingNanos = (nanosToWait % 1_000_000L).toInt()
-                if (millis > 0) {
-                    delay(millis)
-                } else {
-                    yield()
-                }
-            }
+            if (nanosToWait > 0) deadlineScheduler.await(nextTargetNanos)
         }
     }
 

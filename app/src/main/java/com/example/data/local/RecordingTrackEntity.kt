@@ -5,6 +5,10 @@ import androidx.room.PrimaryKey
 import com.example.audio.RecordedStrikeEvent
 import com.example.audio.RecordedTrack
 import com.example.model.StrikeClassification
+import com.example.model.AssessmentEventType
+import com.example.model.AssessmentTimelineEvent
+import com.example.model.TimingResult
+import com.example.model.TimingStatus
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -22,6 +26,7 @@ data class RecordingTrackEntity(
     val eventsJson: String,
     val bpm: Int = 70,
     val timeSignature: String = "4/4",
+    val timelineEventsJson: String = "[]",
     val createdAt: Long = System.currentTimeMillis()
 ) {
     fun toDomain(): RecordedTrack {
@@ -33,6 +38,7 @@ data class RecordingTrackEntity(
             scaleId = scaleId,
             durationMs = durationMs,
             events = events,
+            timelineEvents = parseTimelineEventsJson(timelineEventsJson),
             bpm = bpm,
             timeSignature = timeSignature
         )
@@ -48,7 +54,8 @@ data class RecordingTrackEntity(
                 durationMs = track.durationMs,
                 eventsJson = encodeEventsJson(track.events),
                 bpm = track.bpm,
-                timeSignature = track.timeSignature
+                timeSignature = track.timeSignature,
+                timelineEventsJson = encodeTimelineEventsJson(track.timelineEvents)
             )
         }
 
@@ -70,12 +77,11 @@ data class RecordingTrackEntity(
         }
 
         fun parseEventsJson(json: String): List<RecordedStrikeEvent> {
-            val list = mutableListOf<RecordedStrikeEvent>()
-            try {
-                val array = JSONArray(json)
+            val array = JSONArray(json)
+            return buildList {
                 for (i in 0 until array.length()) {
                     val obj = array.getJSONObject(i)
-                    list.add(
+                    add(
                         RecordedStrikeEvent(
                             noteNumber = obj.getInt("noteNumber"),
                             timestampMs = obj.getLong("timestampMs"),
@@ -83,17 +89,85 @@ data class RecordingTrackEntity(
                             isAccent = obj.optBoolean("isAccent", false),
                             durationMs = if (obj.has("durationMs")) obj.optLong("durationMs") else null,
                             hand = if (obj.has("hand")) obj.optString("hand") else null,
-                            classification = runCatching {
-                                StrikeClassification.valueOf(obj.optString("classification", StrikeClassification.CORRECT_NOTE.name))
-                            }.getOrDefault(StrikeClassification.CORRECT_NOTE),
+                            classification = StrikeClassification.valueOf(
+                                obj.optString("classification", StrikeClassification.CORRECT_NOTE.name)
+                            ),
                             confidence = obj.optDouble("confidence", 1.0).toFloat()
                         )
                     )
                 }
-            } catch (_: Exception) {
-                // Ignore and return empty list on malformed payload
             }
-            return list
+        }
+
+        fun encodeTimelineEventsJson(events: List<AssessmentTimelineEvent>): String {
+            val array = JSONArray()
+            events.forEach { event ->
+                array.put(JSONObject().apply {
+                    put("eventId", event.eventId)
+                    put("sessionId", event.sessionId)
+                    put("assessmentSessionId", event.assessmentSessionId)
+                    event.loopId?.let { put("loopId", it) }
+                    put("patternId", event.patternId)
+                    put("targetId", event.targetId)
+                    put("sequenceIndex", event.sequenceIndex)
+                    put("obligationId", event.obligationId)
+                    put("expectedNotes", JSONArray(event.expectedNotes.toList()))
+                    put("expectedNote", event.expectedNote)
+                    put("detectedNote", event.detectedNote)
+                    put("eventType", event.eventType.name)
+                    put("expectedTimestampNanos", event.expectedTimestampNanos)
+                    put("detectedTimestampNanos", event.detectedTimestampNanos)
+                    put("deviationNanos", event.deviationNanos)
+                    put("timingStatus", event.timingResult?.status?.name)
+                    put("timingDeviationNanos", event.timingResult?.deviationNanos)
+                    put("confidence", event.confidence)
+                    put("source", event.source)
+                    put("durationNanos", event.durationNanos)
+                    put("isConsumed", event.isConsumed)
+                })
+            }
+            return array.toString()
+        }
+
+        fun parseTimelineEventsJson(json: String): List<AssessmentTimelineEvent> {
+            val array = JSONArray(json)
+            return buildList {
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val expectedNote = if (obj.isNull("expectedNote")) null else obj.getInt("expectedNote")
+                    val timingStatus = obj.optString("timingStatus", "").takeIf { it.isNotBlank() }
+                    add(AssessmentTimelineEvent(
+                        eventId = obj.getString("eventId"),
+                        sessionId = obj.getString("sessionId"),
+                        loopId = obj.optString("loopId").takeIf { it.isNotBlank() },
+                        sequenceIndex = obj.getInt("sequenceIndex"),
+                        expectedNote = expectedNote,
+                        detectedNote = if (obj.isNull("detectedNote")) null else obj.getInt("detectedNote"),
+                        eventType = AssessmentEventType.valueOf(obj.getString("eventType")),
+                        expectedTimestampNanos = obj.optLongOrNull("expectedTimestampNanos"),
+                        detectedTimestampNanos = obj.optLongOrNull("detectedTimestampNanos"),
+                        deviationNanos = obj.optLongOrNull("deviationNanos"),
+                        timingResult = timingStatus?.let {
+                            TimingResult(TimingStatus.valueOf(it), obj.optLong("timingDeviationNanos"))
+                        },
+                        confidence = obj.getDouble("confidence").toFloat(),
+                        targetId = obj.optString("targetId").takeIf { it.isNotBlank() },
+                        source = obj.getString("source"),
+                        durationNanos = obj.optLongOrNull("durationNanos"),
+                        isConsumed = obj.getBoolean("isConsumed"),
+                        assessmentSessionId = obj.optString("assessmentSessionId", obj.getString("sessionId")),
+                        patternId = obj.optString("patternId").takeIf { it.isNotBlank() },
+                        obligationId = obj.optString("obligationId").takeIf { it.isNotBlank() },
+                        expectedNotes = obj.optJSONArray("expectedNotes")?.let { notes ->
+                            buildSet { for (j in 0 until notes.length()) add(notes.getInt(j)) }
+                        } ?: expectedNote?.let { setOf(it) }.orEmpty()
+                    ))
+                }
+            }
+        }
+
+        private fun JSONObject.optLongOrNull(name: String): Long? =
+            if (isNull(name)) null else optLong(name)
         }
     }
 }

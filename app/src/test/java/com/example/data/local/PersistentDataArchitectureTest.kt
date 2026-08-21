@@ -6,6 +6,10 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.audio.RecordedStrikeEvent
 import com.example.audio.RecordedTrack
+import com.example.model.AssessmentEventType
+import com.example.model.AssessmentTimelineEvent
+import com.example.model.TimingResult
+import com.example.model.TimingStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -97,5 +101,47 @@ class PersistentDataArchitectureTest {
         assertEquals(9, domainTrack.events[2].noteNumber)
         assertEquals(88, domainTrack.bpm)
         assertEquals("6/8", domainTrack.timeSignature)
+    }
+
+    @Test
+    fun testRecordingTrackDao_persistsCanonicalTimelineChordMetadata() = runBlocking {
+        val timelineEvent = AssessmentTimelineEvent(
+            eventId = "assessment-event-1",
+            sessionId = "session-1",
+            loopId = "loop-2",
+            sequenceIndex = 4,
+            expectedNote = 0,
+            detectedNote = 0,
+            eventType = AssessmentEventType.CORRECT,
+            expectedTimestampNanos = 2_000_000_000L,
+            detectedTimestampNanos = 2_010_000_000L,
+            deviationNanos = 10_000_000L,
+            timingResult = TimingResult(TimingStatus.GOOD, 10_000_000L),
+            confidence = 0.94f,
+            targetId = "target-4",
+            source = "microphone",
+            durationNanos = 30_000_000L,
+            isConsumed = true,
+            assessmentSessionId = "session-1",
+            patternId = "pattern-1",
+            obligationId = "target-4-0",
+            expectedNotes = setOf(0, 1)
+        )
+        val track = RecordedTrack(
+            id = "track-timeline",
+            title = "timeline",
+            date = "2026/08/21",
+            scaleId = "D Kurd",
+            durationMs = 500L,
+            events = emptyList(),
+            timelineEvents = listOf(timelineEvent)
+        )
+
+        recordingDao.insertRecordingTrack(RecordingTrackEntity.fromDomain(track))
+
+        val persisted = recordingDao.getRecordingTrackById(track.id)!!.toDomain()
+        assertEquals(setOf(0, 1), persisted.timelineEvents.single().expectedNotes)
+        assertEquals("target-4-0", persisted.timelineEvents.single().obligationId)
+        assertEquals(TimingStatus.GOOD, persisted.timelineEvents.single().timingResult?.status)
     }
 }

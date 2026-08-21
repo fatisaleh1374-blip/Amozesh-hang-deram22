@@ -2,6 +2,11 @@ package com.example
 
 import com.example.model.PracticeScoreCalculator
 import com.example.model.ScoreCounters
+import com.example.model.AssessmentEventType
+import com.example.model.AssessmentTimeline
+import com.example.model.AssessmentTimelineEvent
+import com.example.model.TimingResult
+import com.example.model.TimingStatus
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -43,4 +48,51 @@ class PracticeScoreCalculatorTest {
         assertEquals(1, score.extraCount)
         assertEquals(0f, score.noteAccuracyPercentage, 0.001f)
     }
+
+    @Test
+    fun timelineProjectionStartsAtZeroAndKeepsExtraOutOfNoteDenominator() {
+        val timeline = AssessmentTimeline()
+        timeline.append(event("extra", AssessmentEventType.EXTRA))
+
+        val score = PracticeScoreCalculator.calculate(timeline)
+
+        assertEquals(0f, score.noteAccuracyPercentage, 0.001f)
+        assertEquals(0f, score.timingAccuracyPercentage, 0.001f)
+        assertEquals(1, score.extraCount)
+    }
+
+    @Test
+    fun timelineProjectionKeepsWrongNoteAndTimingAccuracyIndependent() {
+        val timeline = AssessmentTimeline()
+        timeline.append(event("correct", AssessmentEventType.CORRECT, TimingStatus.PERFECT))
+        timeline.append(event("wrong", AssessmentEventType.WRONG, TimingStatus.PERFECT))
+
+        val score = PracticeScoreCalculator.calculate(timeline)
+
+        assertEquals(50f, score.noteAccuracyPercentage, 0.001f)
+        assertEquals(100f, score.timingAccuracyPercentage, 0.001f)
+    }
+
+    private fun event(
+        id: String,
+        type: AssessmentEventType,
+        timing: TimingStatus? = null
+    ) = AssessmentTimelineEvent(
+        eventId = id,
+        sessionId = "session",
+        loopId = "loop-1",
+        sequenceIndex = 0,
+        expectedNote = 0,
+        detectedNote = if (type == AssessmentEventType.EXTRA) null else 0,
+        eventType = type,
+        expectedTimestampNanos = 1_000_000_000L,
+        detectedTimestampNanos = 1_000_000_000L,
+        deviationNanos = 0L,
+        timingResult = timing?.let { TimingResult(it, 0L) },
+        confidence = 1f,
+        targetId = "target",
+        source = "test",
+        durationNanos = null,
+        isConsumed = type == AssessmentEventType.CORRECT
+    )
 }

@@ -67,6 +67,7 @@ class PracticeEngine(
 
     private var playbackJob: Job? = null
     private var sessionStartedNanos: Long = 0L
+    private val deadlineScheduler = DeadlineScheduler(clock)
 
     var onRoundCompleted: ((HandpanPattern, Int, Int) -> Unit)? = null
 
@@ -123,10 +124,7 @@ class PracticeEngine(
         playbackJob = null
         if (acousticEvaluator.state.value.isEnabled) {
             acousticEvaluator.stopAssessment(showSummary = true)
-        }
-        _uiState.update {
-            it.copy(
-                isPlaying = false,
+                        deadlineScheduler.await(targetSliceNanos)
                 isCountIn = false,
                 activeNoteNumber = -1,
                 activeEvents = emptyList(),
@@ -179,10 +177,7 @@ class PracticeEngine(
                 triggerHaptic(isAccent = isFirst)
 
                 val nextTargetNanos = countInStartNanos + (c * beatIntervalNanos).toLong()
-                val remainingNanos = nextTargetNanos - clock.nowNanos()
-                if (remainingNanos > 0) {
-                    delay(remainingNanos / 1_000_000L)
-                }
+                deadlineScheduler.await(nextTargetNanos)
             }
 
             _uiState.update { it.copy(isCountIn = false) }
@@ -214,7 +209,7 @@ class PracticeEngine(
             )
 
             if (schedule.isEmpty()) {
-                delay(100)
+                deadlineScheduler.await(clock.nowNanos() + 100_000_000L)
                 continue
             }
 
@@ -231,7 +226,7 @@ class PracticeEngine(
                 // Wait until monotonic timestamp for this slice
                 val waitNanos = targetSliceNanos - clock.nowNanos()
                 if (waitNanos > 0) {
-                    delay(waitNanos / 1_000_000L)
+                    deadlineScheduler.await(targetSliceNanos)
                 }
 
                 if (playbackJob?.isActive != true) break

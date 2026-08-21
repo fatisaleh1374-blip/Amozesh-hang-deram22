@@ -2,5 +2,5 @@
   "name": "آموزش هنگ درام شارن",
   "description": "آموزش جامع و تعاملی هنگ درام شارن (Sharn Handpan) بر پایه نت‌نویسی عددی، مترونوم حرفه‌ای، کتابخانه تمرین، ویرایشگر الگو، ارزیابی هوشمند آکوستیک ضربات و استودیوی کالیبراسیون و ضبط صدای ساز واقعی",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

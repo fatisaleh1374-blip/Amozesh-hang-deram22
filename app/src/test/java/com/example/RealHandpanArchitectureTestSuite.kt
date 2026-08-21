@@ -106,7 +106,7 @@ class RealHandpanArchitectureTestSuite {
     @Test
     fun test04_acousticEvaluatorEvaluatesAccurateHit() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
-        evaluator.notifyExpectedSlice(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
         // Target note at 0ms is D3 (approx 146.83 Hz)
         val result = evaluator.evaluateDetectedPitch(146.8f, 0.9f)
         assertNotNull(result)
@@ -117,7 +117,7 @@ class RealHandpanArchitectureTestSuite {
     @Test
     fun test05_wrongPitchRegistersWrongNote() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
-        evaluator.notifyExpectedSlice(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
         // Note 0 is D3 (146.83Hz). F3 is note 2 (174.61Hz)
         val result = evaluator.evaluateDetectedPitch(174.6f, 0.9f)
         assertNotNull(result)
@@ -138,9 +138,9 @@ class RealHandpanArchitectureTestSuite {
         )
         evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 120)
         val firstTarget = fakeClock.currentNanos
-        evaluator.notifyExpectedSlice(listOf(pattern.events[0]), firstTarget)
+        evaluator.notifyExpectedTestTarget(listOf(pattern.events[0]), firstTarget)
         val secondTarget = firstTarget + 125_000_000L
-        evaluator.notifyExpectedSlice(listOf(pattern.events[1]), secondTarget)
+        evaluator.notifyExpectedTestTarget(listOf(pattern.events[1]), secondTarget)
 
         val result = evaluator.evaluateDetectedPitch(220.0f, 0.9f, secondTarget)
 
@@ -155,7 +155,7 @@ class RealHandpanArchitectureTestSuite {
     fun test06_earlyHitRegistration() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
         val expected = testPattern.events[1]
-        evaluator.notifyExpectedSlice(listOf(expected), fakeClock.currentNanos + 500_000_000L)
+        evaluator.notifyExpectedTestTarget(listOf(expected), fakeClock.currentNanos + 500_000_000L)
         // Advance clock to right before next note (-120ms)
         fakeClock.advanceMs(380) // expected note is at 500ms
         val result = evaluator.evaluateDetectedPitch(expected.noteNumber.let { NotePitchConfig.D_KURD_9.baseFrequencies[it] ?: 146.8f }, 0.9f)
@@ -168,7 +168,7 @@ class RealHandpanArchitectureTestSuite {
     fun test07_lateHitRegistration() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
         val expected = testPattern.events[1]
-        evaluator.notifyExpectedSlice(listOf(expected), fakeClock.currentNanos + 500_000_000L)
+        evaluator.notifyExpectedTestTarget(listOf(expected), fakeClock.currentNanos + 500_000_000L)
         fakeClock.advanceMs(620) // expected note is at 500ms
         val result = evaluator.evaluateDetectedPitch(expected.noteNumber.let { NotePitchConfig.D_KURD_9.baseFrequencies[it] ?: 146.8f }, 0.9f)
         assertNotNull(result)
@@ -259,7 +259,7 @@ class RealHandpanArchitectureTestSuite {
     @Test
     fun test17_evaluatorAccuracyCalculation() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
-        evaluator.notifyExpectedSlice(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
         evaluator.evaluateDetectedPitch(146.83f, 0.95f)
         val state = evaluator.state.value
         assertEquals(1, state.perfectCount)
@@ -278,7 +278,7 @@ class RealHandpanArchitectureTestSuite {
     @Test
     fun test29_unknownStrikeWithinTargetIsNotSilentlyDropped() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
-        evaluator.notifyExpectedSlice(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
 
         val result = evaluator.evaluateDetectedPitch(146.83f, 0.2f)
 
@@ -292,7 +292,7 @@ class RealHandpanArchitectureTestSuite {
     fun test30_wrongStrikeDoesNotConsumeExpectedTarget() {
         val expected = testPattern.events.first { !it.isRest }
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
-        evaluator.notifyExpectedSlice(listOf(expected), fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(listOf(expected), fakeClock.currentNanos)
 
         val wrong = evaluator.evaluateDetectedPitch(261.63f, 0.95f)
         val correct = evaluator.evaluateDetectedPitch(146.83f, 0.95f)
@@ -310,13 +310,13 @@ class RealHandpanArchitectureTestSuite {
         val second = testPattern.events.drop(1).first { !it.isRest }
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
 
-        evaluator.notifyExpectedSlice(listOf(first), fakeClock.currentNanos + 1_000_000_000L)
-        evaluator.notifyExpectedSlice(listOf(second), fakeClock.currentNanos + 2_000_000_000L)
+        evaluator.notifyExpectedTestTarget(listOf(first), fakeClock.currentNanos + 1_000_000_000L)
+        evaluator.notifyExpectedTestTarget(listOf(second), fakeClock.currentNanos + 2_000_000_000L)
 
         assertEquals(0, evaluator.state.value.missedCount)
 
         fakeClock.advanceMs(1_200)
-        evaluator.notifyExpectedSlice(emptyList(), fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(emptyList(), fakeClock.currentNanos)
 
         assertEquals(1, evaluator.state.value.missedCount)
     }
@@ -325,7 +325,7 @@ class RealHandpanArchitectureTestSuite {
     fun test33_duplicateStrikeWithSameTimestampIsEvaluatedOnce() {
         val expected = testPattern.events.first { !it.isRest }
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
-        evaluator.notifyExpectedSlice(listOf(expected), fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(listOf(expected), fakeClock.currentNanos)
 
         val first = evaluator.evaluateDetectedPitch(146.83f, 0.95f, fakeClock.currentNanos)
         val duplicate = evaluator.evaluateDetectedPitch(146.83f, 0.95f, fakeClock.currentNanos)
@@ -343,7 +343,7 @@ class RealHandpanArchitectureTestSuite {
         val expected = testPattern.events.first { !it.isRest }
 
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
-        evaluator.notifyExpectedSlice(listOf(expected), fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(listOf(expected), fakeClock.currentNanos)
         evaluator.evaluateDetectedPitch(146.83f, 0.95f, fakeClock.currentNanos)
 
         assertEquals(
@@ -385,7 +385,7 @@ class RealHandpanArchitectureTestSuite {
             events = listOf(NoteEvent(noteNumber = 0, beatPosition = 1.0))
         )
         evaluator.startAssessment(bpm60Pattern, NotePitchConfig.D_KURD_9, bpm = 60)
-        evaluator.notifyExpectedSlice(listOf(bpm60Pattern.events.first()), fakeClock.currentNanos + 1_000_000_000L)
+        evaluator.notifyExpectedTestTarget(listOf(bpm60Pattern.events.first()), fakeClock.currentNanos + 1_000_000_000L)
         fakeClock.advanceMs(1000)
 
         val result = evaluator.evaluateDetectedPitch(146.83f, 0.9f)
@@ -439,7 +439,7 @@ class RealHandpanArchitectureTestSuite {
             events = listOf(NoteEvent(noteNumber = 0, beatPosition = 0.0))
         )
         evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
-        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(pattern.events, fakeClock.currentNanos)
         fakeClock.advanceMs(60)
 
         val result = evaluator.evaluateDetectedPitch(146.83f, 0.95f)
@@ -462,7 +462,7 @@ class RealHandpanArchitectureTestSuite {
             events = listOf(NoteEvent(noteNumber = 0, beatPosition = 0.0))
         )
         evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
-        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(pattern.events, fakeClock.currentNanos)
         fakeClock.advanceMs(120)
 
         val result = evaluator.evaluateDetectedPitch(261.63f, 0.95f)
@@ -485,7 +485,7 @@ class RealHandpanArchitectureTestSuite {
             events = listOf(NoteEvent(noteNumber = 0, beatPosition = 0.0))
         )
         evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
-        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(pattern.events, fakeClock.currentNanos)
 
         val result = evaluator.evaluateDetectedPitch(261.63f, 0.95f)
 
@@ -506,9 +506,9 @@ class RealHandpanArchitectureTestSuite {
             events = listOf(NoteEvent(noteNumber = 0, beatPosition = 0.0))
         )
         evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
-        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(pattern.events, fakeClock.currentNanos)
         fakeClock.advanceMs(200)
-        evaluator.notifyExpectedSlice(emptyList(), fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(emptyList(), fakeClock.currentNanos)
 
         assertEquals(1, evaluator.state.value.missedCount)
         assertEquals(1, evaluator.state.value.totalStrikesEvaluated)
@@ -528,7 +528,7 @@ class RealHandpanArchitectureTestSuite {
             )
         )
         evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
-        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(pattern.events, fakeClock.currentNanos)
 
         val first = evaluator.evaluateDetectedPitch(146.83f, 0.95f)
         val second = evaluator.evaluateDetectedPitch(220.0f, 0.95f)
@@ -553,10 +553,10 @@ class RealHandpanArchitectureTestSuite {
             )
         )
         evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
-        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(pattern.events, fakeClock.currentNanos)
         evaluator.evaluateDetectedPitch(146.83f, 0.95f)
         fakeClock.advanceMs(200)
-        evaluator.notifyExpectedSlice(emptyList(), fakeClock.currentNanos)
+        evaluator.notifyExpectedTestTarget(emptyList(), fakeClock.currentNanos)
 
         assertEquals(1, evaluator.state.value.perfectCount)
         assertEquals(1, evaluator.state.value.missedCount)
