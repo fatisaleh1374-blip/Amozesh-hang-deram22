@@ -9,6 +9,9 @@ import com.example.model.NotePitchConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,6 +53,7 @@ class PitchDetector(
     private var audioRecord: AudioRecord? = null
     private var trackingJob: Job? = null
     private var isListening = false
+    private val detectorScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val onsetMatcher = OnsetAndPitchMatcher(SAMPLE_RATE)
 
     @SuppressLint("MissingPermission")
@@ -80,7 +84,7 @@ class PitchDetector(
             audioRecord?.startRecording()
             isListening = true
 
-            trackingJob = CoroutineScope(Dispatchers.Default).launch {
+            trackingJob = detectorScope.launch {
                 val audioBuffer = ShortArray(BUFFER_SIZE)
                 var lastRms = 0f
                 var lastStrikeTimestampNanos = 0L
@@ -161,5 +165,10 @@ class PitchDetector(
             audioRecord?.release()
         } catch (_: Exception) {}
         audioRecord = null
+    }
+
+    fun release() {
+        stopListening()
+        detectorScope.cancel()
     }
 }

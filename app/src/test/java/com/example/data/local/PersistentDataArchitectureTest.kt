@@ -77,6 +77,8 @@ class PersistentDataArchitectureTest {
             date = "2026/08/21 12:00",
             scaleId = "D Kurd",
             durationMs = 1200L,
+            bpm = 88,
+            timeSignature = "6/8",
             events = events
         )
 
@@ -93,5 +95,7 @@ class PersistentDataArchitectureTest {
         assertEquals(0, domainTrack.events[0].noteNumber)
         assertTrue(domainTrack.events[0].isAccent)
         assertEquals(9, domainTrack.events[2].noteNumber)
+        assertEquals(88, domainTrack.bpm)
+        assertEquals("6/8", domainTrack.timeSignature)
     }
 }

@@ -19,6 +19,8 @@ data class RecordingTrackEntity(
     val scaleId: String,
     val durationMs: Long,
     val eventsJson: String,
+    val bpm: Int = 70,
+    val timeSignature: String = "4/4",
     val createdAt: Long = System.currentTimeMillis()
 ) {
     fun toDomain(): RecordedTrack {
@@ -29,7 +31,9 @@ data class RecordingTrackEntity(
             date = date,
             scaleId = scaleId,
             durationMs = durationMs,
-            events = events
+            events = events,
+            bpm = bpm,
+            timeSignature = timeSignature
         )
     }
 
@@ -41,7 +45,9 @@ data class RecordingTrackEntity(
                 date = track.date,
                 scaleId = track.scaleId,
                 durationMs = track.durationMs,
-                eventsJson = encodeEventsJson(track.events)
+                eventsJson = encodeEventsJson(track.events),
+                bpm = track.bpm,
+                timeSignature = track.timeSignature
             )
         }
 
@@ -53,6 +59,8 @@ data class RecordingTrackEntity(
                 obj.put("timestampMs", e.timestampMs)
                 obj.put("velocity", e.velocity.toDouble())
                 obj.put("isAccent", e.isAccent)
+                e.durationMs?.let { obj.put("durationMs", it) }
+                e.hand?.let { obj.put("hand", it) }
                 array.put(obj)
             }
             return array.toString()
@@ -69,7 +77,9 @@ data class RecordingTrackEntity(
                             noteNumber = obj.getInt("noteNumber"),
                             timestampMs = obj.getLong("timestampMs"),
                             velocity = obj.optDouble("velocity", 0.85).toFloat(),
-                            isAccent = obj.optBoolean("isAccent", false)
+                            isAccent = obj.optBoolean("isAccent", false),
+                            durationMs = if (obj.has("durationMs")) obj.optLong("durationMs") else null,
+                            hand = if (obj.has("hand")) obj.optString("hand") else null
                         )
                     )
                 }

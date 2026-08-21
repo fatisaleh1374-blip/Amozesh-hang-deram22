@@ -66,6 +66,9 @@ class PracticeEngine(
     val uiState: StateFlow<PracticeUiState> = _uiState.asStateFlow()
 
     private var playbackJob: Job? = null
+    private var sessionStartedNanos: Long = 0L
+
+    var onRoundCompleted: ((HandpanPattern, Int, Int) -> Unit)? = null
 
     fun loadPattern(pattern: HandpanPattern) {
         stop()
@@ -100,9 +103,14 @@ class PracticeEngine(
         if (_uiState.value.isPlaying) return
 
         _uiState.update { it.copy(isPlaying = true) }
+        sessionStartedNanos = clock.nowNanos()
 
         if (acousticEvaluator.state.value.isEnabled) {
-            acousticEvaluator.startAssessment(pattern, audioEngine.getPitchConfig())
+            acousticEvaluator.startAssessment(
+                pattern = pattern,
+                scaleConfig = audioEngine.getPitchConfig(),
+                bpm = _uiState.value.effectiveBpm
+            )
         }
 
         playbackJob = engineScope.launch {
@@ -161,7 +169,7 @@ class PracticeEngine(
 
             val countInStartNanos = clock.nowNanos()
             val effectiveBpm = _uiState.value.effectiveBpm
-            val beatIntervalNanos = (60.0 / effectiveBpm.toDouble()) * 1_000_000_000.0
+            val beatIntervalNanos = MusicalTiming.beatDurationNanos(effectiveBpm)
 
             for (c in 1..beatsPerBar) {
                 _uiState.update { it.copy(countInBeat = c) }
@@ -205,11 +213,11 @@ class PracticeEngine(
 
             val loopStartBeat = ((startBar - 1) * beatsPerBar).toDouble()
             val loopStartNanos = clock.nowNanos()
-            val nanosPerBeat = (60.0 / currentBpm.toDouble()) * 1_000_000_000.0
 
             for (slice in schedule) {
                 val sliceOffsetBeats = slice.beatPosition - loopStartBeat
-                val targetSliceNanos = loopStartNanos + (sliceOffsetBeats * nanosPerBeat).toLong()
+                val targetSliceNanos = loopStartNanos +
+                    MusicalTiming.beatToNanos(sliceOffsetBeats, currentBpm)
 
                 // Wait until monotonic timestamp for this slice
                 val waitNanos = targetSliceNanos - clock.nowNanos()
@@ -272,6 +280,11 @@ class PracticeEngine(
 
             currentLoopIteration++
             _uiState.update { it.copy(totalRoundsCompleted = currentLoopIteration) }
+            onRoundCompleted?.invoke(
+                pattern,
+                currentState.effectiveBpm,
+                ((clock.nowNanos() - sessionStartedNanos) / 1_000_000_000L).toInt().coerceAtLeast(0)
+            )
 
             // Speed Ladder Progression
             if (currentState.speedLadderEnabled && currentLoopIteration > 0 &&
@@ -348,7 +361,7 @@ class PracticeEngine(
         acousticEvaluator.toggleEnabled()
         if (next && _uiState.value.isPlaying) {
             _uiState.value.pattern?.let {
-                acousticEvaluator.startAssessment(it, audioEngine.getPitchConfig())
+                acousticEvaluator.startAssessment(it, audioEngine.getPitchConfig(), _uiState.value.effectiveBpm)
             }
         }
     }
@@ -360,7 +373,7 @@ class PracticeEngine(
                 acousticEvaluator.toggleEnabled()
             } else {
                 _uiState.value.pattern?.let {
-                    acousticEvaluator.startAssessment(it, audioEngine.getPitchConfig())
+                acousticEvaluator.startAssessment(it, audioEngine.getPitchConfig(), _uiState.value.effectiveBpm)
                 }
             }
         } else {

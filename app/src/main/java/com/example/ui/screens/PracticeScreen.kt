@@ -126,7 +126,7 @@ fun PracticeScreen(
     ) { isGranted ->
         hasMicPermission = isGranted
         if (isGranted) {
-            viewModel.practiceEngine.setAcousticAssessmentEnabled(true)
+            viewModel.practiceEngine.setInputMode(PracticeInputMode.REAL_HANDPAN)
         }
     }
 
@@ -336,8 +336,9 @@ fun PracticeScreen(
                                 if (practiceState.inputMode == PracticeInputMode.VIRTUAL_HANDPAN) {
                                     if (!hasMicPermission) {
                                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    } else {
+                                        viewModel.practiceEngine.setInputMode(PracticeInputMode.REAL_HANDPAN)
                                     }
-                                    viewModel.practiceEngine.setInputMode(PracticeInputMode.REAL_HANDPAN)
                                 } else {
                                     viewModel.practiceEngine.setInputMode(PracticeInputMode.VIRTUAL_HANDPAN)
                                 }

@@ -26,18 +26,24 @@ android {
   signingConfigs {
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH")
-      if (keystorePath != null && file(keystorePath).exists()) {
-        storeFile = file(keystorePath)
-        storePassword = System.getenv("STORE_PASSWORD")
-        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-        keyPassword = System.getenv("KEY_PASSWORD")
-      } else {
-        // Safe fallback for local/CI release builds without hardcoding or failing build
-        storeFile = file("${rootDir}/debug.keystore")
-        storePassword = "android"
-        keyAlias = "androiddebugkey"
-        keyPassword = "android"
-      }
+        val releaseSigningConfigured = !keystorePath.isNullOrBlank() &&
+            file(keystorePath).exists() &&
+            !System.getenv("STORE_PASSWORD").isNullOrBlank() &&
+            !System.getenv("KEY_ALIAS").isNullOrBlank() &&
+            !System.getenv("KEY_PASSWORD").isNullOrBlank()
+
+        if (releaseSigningConfigured) {
+            storeFile = file(keystorePath!!)
+            storePassword = System.getenv("STORE_PASSWORD")
+            keyAlias = System.getenv("KEY_ALIAS")
+            keyPassword = System.getenv("KEY_PASSWORD")
+        } else {
+            // Keep non-release tasks configurable; release validation below fails securely.
+            storeFile = layout.buildDirectory.file("missing-release.keystore").get().asFile
+            storePassword = ""
+            keyAlias = ""
+            keyPassword = ""
+        }
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
@@ -69,6 +75,23 @@ android {
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
+  }
+}
+
+gradle.taskGraph.whenReady {
+  val isReleaseTask = allTasks.any { task ->
+    task.name.contains("Release", ignoreCase = true) && task.path.startsWith(":app:")
+  }
+  if (isReleaseTask) {
+    val keystorePath = System.getenv("KEYSTORE_PATH")
+    val configured = !keystorePath.isNullOrBlank() &&
+      file(keystorePath).exists() &&
+      !System.getenv("STORE_PASSWORD").isNullOrBlank() &&
+      !System.getenv("KEY_ALIAS").isNullOrBlank() &&
+      !System.getenv("KEY_PASSWORD").isNullOrBlank()
+    check(configured) {
+      "Official release signing is required. Set KEYSTORE_PATH, STORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD."
+    }
   }
 }
 

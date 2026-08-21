@@ -106,12 +106,39 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
+        practiceEngine.onRoundCompleted = { pattern, bpm, elapsedSeconds ->
+            viewModelScope.launch {
+                repository.recordPracticeSession(pattern.id, bpm, elapsedSeconds)
+            }
+        }
+        practiceEngine.acousticEvaluator.onStrikeDetected = { pitch, timestampNanos ->
+            pitch.matchedNoteNumber?.let { noteNumber ->
+                performanceRecorder.recordStrike(
+                    noteNumber = noteNumber,
+                    velocity = pitch.amplitude,
+                    timestampMs = timestampNanos / 1_000_000L
+                )
+            }
+        }
+
         val prefs = context.getSharedPreferences("handpan_prefs", Context.MODE_PRIVATE)
         val isFirstLaunch = prefs.getBoolean("is_first_launch", true)
         val savedTheme = prefs.getBoolean("dark_theme", true)
         val savedHaptic = prefs.getBoolean("is_haptic_enabled", true)
         val savedMasterVol = prefs.getFloat("master_volume", 1.0f)
         val savedMetroVol = prefs.getFloat("metronome_volume", 0.8f)
+        val savedInputMode = try {
+            PracticeInputMode.valueOf(
+                prefs.getString("practice_input_mode", PracticeInputMode.REAL_HANDPAN.name)
+                    ?: PracticeInputMode.REAL_HANDPAN.name
+            )
+        } catch (_: Exception) {
+            PracticeInputMode.REAL_HANDPAN
+        }
+        val savedScaleName = prefs.getString("scale_name", NotePitchConfig.D_KURD_9.scaleName)
+        val savedScale = NotePitchConfig.SCALES.find { it.scaleName == savedScaleName }
+            ?: NotePitchConfig.D_KURD_9
+        val savedTuning = prefs.getFloat("tuning_reference_hz", 440.0f)
         val savedNotation = try {
             NotationSystem.valueOf(prefs.getString("notation_system", NotationSystem.NUMERIC.name) ?: NotationSystem.NUMERIC.name)
         } catch (_: Exception) {
@@ -131,6 +158,8 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
                 isHapticEnabled = savedHaptic,
                 masterVolume = savedMasterVol,
                 metronomeVolume = savedMetroVol,
+                defaultPracticeInputMode = savedInputMode,
+                currentScaleConfig = savedScale.withTuning(savedTuning),
                 preferredNotationSystem = savedNotation,
                 currentInstrumentProfile = savedProfile
             )
@@ -142,6 +171,7 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
 
         audioEngine.setMasterVolume(savedMasterVol)
         audioEngine.setMetronomeVolume(savedMetroVol)
+        audioEngine.loadSamples(savedScale.withTuning(savedTuning))
         metronomeEngine.setHapticEnabled(savedHaptic)
 
         refreshCustomSamplesMap()
@@ -296,6 +326,8 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
     fun setPracticeInputMode(mode: PracticeInputMode) {
         _appUiState.update { it.copy(defaultPracticeInputMode = mode) }
         practiceEngine.setInputMode(mode)
+        context.getSharedPreferences("handpan_prefs", Context.MODE_PRIVATE)
+            .edit().putString("practice_input_mode", mode.name).apply()
     }
 
     fun startPractice(pattern: HandpanPattern, inputMode: PracticeInputMode = _appUiState.value.defaultPracticeInputMode) {
@@ -310,6 +342,11 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
             hapticHelper.performClick(accent)
         }
         audioEngine.playNote(noteNumber, accent = accent, velocity = if (accent) 1.0f else 0.85f)
+        performanceRecorder.recordStrike(
+            noteNumber = noteNumber,
+            isAccent = accent,
+            velocity = if (accent) 1.0f else 0.85f
+        )
     }
 
     fun saveCustomPattern(pattern: HandpanPattern) {
@@ -342,6 +379,11 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
     fun setScaleTuning(config: NotePitchConfig) {
         _appUiState.update { it.copy(currentScaleConfig = config) }
         audioEngine.loadSamples(config)
+        context.getSharedPreferences("handpan_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("scale_name", config.scaleName)
+            .putFloat("tuning_reference_hz", config.tuningReferenceHz)
+            .apply()
     }
 
     fun toggleHaptic() {
@@ -434,8 +476,10 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
         super.onCleared()
         practiceEngine.stop()
         practiceEngine.acousticEvaluator.stopAssessment(showSummary = false)
+        practiceEngine.acousticEvaluator.release()
         metronomeEngine.stop()
         ambienceEngine.stopAmbience()
+        performanceRecorder.release()
         performanceRecorder.stopPlayback()
         audioEngine.release()
     }

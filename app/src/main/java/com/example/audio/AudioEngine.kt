@@ -7,6 +7,9 @@ import android.util.Log
 import com.example.model.NotePitchConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
@@ -28,6 +31,8 @@ open class AudioEngine(private val context: Context? = null) {
     private var masterVolume: Float = 1.0f
     private var metronomeVolume: Float = 0.8f
     private var isMuted: Boolean = false
+    private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var sampleLoadJob: Job? = null
 
     init {
         if (context != null) {
@@ -62,7 +67,8 @@ open class AudioEngine(private val context: Context? = null) {
     open fun loadSamples(config: NotePitchConfig) {
         this.pitchConfig = config
         val currentCtx = context ?: return
-        CoroutineScope(Dispatchers.IO).launch {
+        sampleLoadJob?.cancel()
+        sampleLoadJob = engineScope.launch {
             try {
                 // 1. Synthesize clicks
                 val clickAccentWav = HandpanSynthesizer.pcmToWav(HandpanSynthesizer.generateClickSample(isAccent = true))
@@ -92,7 +98,8 @@ open class AudioEngine(private val context: Context? = null) {
      */
     open fun reloadNoteSample(noteNumber: Int) {
         if (context == null) return
-        CoroutineScope(Dispatchers.IO).launch {
+        sampleLoadJob?.cancel()
+        sampleLoadJob = engineScope.launch {
             loadSingleNote(noteNumber, pitchConfig)
         }
     }
@@ -242,6 +249,8 @@ open class AudioEngine(private val context: Context? = null) {
     }
 
     open fun release() {
+        sampleLoadJob?.cancel()
+        engineScope.cancel()
         try {
             soundPool?.release()
         } catch (_: Exception) {}

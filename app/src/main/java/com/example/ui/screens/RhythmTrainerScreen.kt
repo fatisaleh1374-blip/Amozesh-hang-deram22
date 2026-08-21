@@ -107,8 +107,6 @@ fun RhythmTrainerScreen(
     modifier: Modifier = Modifier
 ) {
     val metronomeState by viewModel.metronomeEngine.state.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-
     var isTrainingActive by remember { mutableStateOf(false) }
     var currentBpm by remember { mutableIntStateOf(70) }
     var selectedTimeSignature by remember { mutableStateOf(TimeSignature.Common44) }
@@ -128,13 +126,10 @@ fun RhythmTrainerScreen(
     var lateTapsCount by remember { mutableIntStateOf(0) }
     var totalTapsCount by remember { mutableIntStateOf(0) }
 
-    var trainerLoopJob by remember { mutableStateOf<Job?>(null) }
-
     val scrollState = rememberScrollState()
 
     DisposableEffect(Unit) {
         onDispose {
-            trainerLoopJob?.cancel()
             viewModel.metronomeEngine.stop()
         }
     }
@@ -152,36 +147,12 @@ fun RhythmTrainerScreen(
         viewModel.metronomeEngine.setBpm(currentBpm)
         viewModel.metronomeEngine.setTimeSignature(selectedTimeSignature)
 
-        trainerLoopJob?.cancel()
-        trainerLoopJob = scope.launch {
-            val nanosPerBeat = (60.0 / currentBpm.toDouble() * 1_000_000_000.0).toLong()
-            var beatIndex = 1
-            var nextNanos = System.nanoTime()
-
-            while (isActive && isTrainingActive) {
-                lastTargetBeatNanos = nextNanos
-                nextTargetBeatNanos = nextNanos + nanosPerBeat
-                currentBeatNumber = beatIndex
-
-                val isDownbeat = (beatIndex == 1)
-                viewModel.audioEngine.playMetronomeClick(isAccent = isDownbeat)
-                viewModel.hapticHelper.performClick(isDownbeat)
-
-                nextNanos += nanosPerBeat
-                beatIndex = if (beatIndex >= selectedTimeSignature.beatsPerBar) 1 else beatIndex + 1
-
-                val sleepNanos = nextNanos - System.nanoTime()
-                if (sleepNanos > 0) {
-                    delay(sleepNanos / 1_000_000L)
-                }
-            }
-        }
+        viewModel.metronomeEngine.start()
     }
 
     fun stopTraining() {
         isTrainingActive = false
-        trainerLoopJob?.cancel()
-        trainerLoopJob = null
+        viewModel.metronomeEngine.stop()
     }
 
     fun registerTap() {
@@ -191,6 +162,10 @@ fun RhythmTrainerScreen(
         }
 
         val tapNanos = System.nanoTime()
+        val tick = viewModel.metronomeEngine.state.value
+        lastTargetBeatNanos = tick.lastTickTimestampNanos
+        nextTargetBeatNanos = tick.nextTickTimestampNanos
+        currentBeatNumber = tick.currentBeat
         val distToLast = Math.abs(tapNanos - lastTargetBeatNanos)
         val distToNext = Math.abs(tapNanos - nextTargetBeatNanos)
 

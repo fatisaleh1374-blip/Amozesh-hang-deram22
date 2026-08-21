@@ -6,12 +6,16 @@ import com.example.util.HapticHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 
 data class MetronomeState(
     val isPlaying: Boolean = false,
@@ -23,7 +27,11 @@ data class MetronomeState(
     val isDownbeat: Boolean = false,
     val accentFirstBeat: Boolean = true,
     val isMuted: Boolean = false,
-    val hapticEnabled: Boolean = true
+    val hapticEnabled: Boolean = true,
+    val barIndex: Int = 1,
+    val tickIndex: Long = 0L
+    val lastTickTimestampNanos: Long = 0L
+    val nextTickTimestampNanos: Long = 0L
 )
 
 class MetronomeEngine(
@@ -34,6 +42,7 @@ class MetronomeEngine(
     val state: StateFlow<MetronomeState> = _state.asStateFlow()
 
     private var metronomeJob: Job? = null
+    private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val tapTimes = mutableListOf<Long>()
 
     fun togglePlay() {
@@ -48,7 +57,7 @@ class MetronomeEngine(
         if (_state.value.isPlaying) return
         _state.update { it.copy(isPlaying = true, currentBeat = 1, currentSubBeat = 1) }
 
-        metronomeJob = CoroutineScope(Dispatchers.Default).launch {
+        metronomeJob = engineScope.launch {
             runMetronomeLoop()
         }
     }
@@ -61,6 +70,7 @@ class MetronomeEngine(
 
     fun release() {
         stop()
+        engineScope.cancel()
     }
 
     private suspend fun runMetronomeLoop() {
@@ -79,6 +89,9 @@ class MetronomeEngine(
             val currentSubIndex = (tickInBar % divsPerBeat) + 1
             val isDownbeat = (tickInBar == 0)
             val isMainBeat = (currentSubIndex == 1)
+            val intervalNanos = calculateTickIntervalNanos(currentState.bpm, divsPerBeat)
+            val tickTimestampNanos = startTimeNanos + (tickIndex * intervalNanos)
+            val nextTargetNanos = tickTimestampNanos + intervalNanos
 
             // Play audio
             val shouldAccent = isDownbeat && currentState.accentFirstBeat
@@ -99,15 +112,16 @@ class MetronomeEngine(
                 it.copy(
                     currentBeat = currentBeatIndex,
                     currentSubBeat = currentSubIndex,
-                    isDownbeat = isDownbeat
+                    isDownbeat = isDownbeat,
+                    barIndex = (tickIndex / totalTicksPerBar).toInt() + 1,
+                    tickIndex = tickIndex,
+                    lastTickTimestampNanos = tickTimestampNanos,
+                    nextTickTimestampNanos = nextTargetNanos
                 )
             }
 
             tickIndex++
 
-            // Calculate precise target timestamp in nanoseconds
-            val intervalNanos = calculateTickIntervalNanos(currentState.bpm, divsPerBeat)
-            val nextTargetNanos = startTimeNanos + (tickIndex * intervalNanos)
             val currentNanos = System.nanoTime()
             val nanosToWait = nextTargetNanos - currentNanos
 
@@ -116,6 +130,8 @@ class MetronomeEngine(
                 val remainingNanos = (nanosToWait % 1_000_000L).toInt()
                 if (millis > 0) {
                     delay(millis)
+                } else {
+                    yield()
                 }
             }
         }
@@ -163,12 +179,11 @@ class MetronomeEngine(
 
     companion object {
         fun calculateTickIntervalNanos(bpm: Int, subdivisionDivisions: Int): Long {
-            val beatIntervalNanos = (60.0 / bpm.toDouble()) * 1_000_000_000.0
-            return (beatIntervalNanos / subdivisionDivisions.toDouble()).toLong()
+            return MusicalTiming.beatDurationNanos(bpm) / subdivisionDivisions.coerceAtLeast(1)
         }
 
         fun calculateBeatIntervalMs(bpm: Int): Long {
-            return (60_000.0 / bpm.toDouble()).toLong()
+            return MusicalTiming.beatDurationNanos(bpm) / 1_000_000L
         }
     }
 }

@@ -3,6 +3,7 @@ package com.example.audio
 import android.content.Context
 import android.util.Log
 import com.example.model.NoteEvent
+import com.example.model.NotePitchConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,14 +29,18 @@ data class RecordedTrack(
     val date: String,
     val scaleId: String,
     val durationMs: Long,
-    val events: List<RecordedStrikeEvent>
+    val events: List<RecordedStrikeEvent>,
+    val bpm: Int = 70,
+    val timeSignature: String = "4/4"
 )
 
 data class RecordedStrikeEvent(
     val noteNumber: Int,
     val timestampMs: Long,
     val velocity: Float = 0.85f,
-    val isAccent: Boolean = false
+    val isAccent: Boolean = false,
+    val durationMs: Long? = null,
+    val hand: String? = null
 )
 
 data class RecorderState(
@@ -54,7 +59,8 @@ data class RecorderState(
 class PerformanceRecorder(
     private val context: Context,
     private val audioEngine: AudioEngine,
-    private val repository: com.example.data.repository.HandpanRepository? = null
+    private val repository: com.example.data.repository.HandpanRepository? = null,
+    private val clock: PracticeClock = PracticeClock.Default
 ) {
     private val _state = MutableStateFlow(RecorderState())
     val state: StateFlow<RecorderState> = _state.asStateFlow()
@@ -62,6 +68,7 @@ class PerformanceRecorder(
     private val liveEvents = mutableListOf<RecordedStrikeEvent>()
     private var recordStartMs: Long = 0L
     private var playbackJob: Job? = null
+    private val pitchDetector = PitchDetector(clock)
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
 
@@ -69,11 +76,11 @@ class PerformanceRecorder(
         loadTracksFromStorage()
     }
 
-    fun startRecording() {
+    fun startRecording(scaleConfig: NotePitchConfig = NotePitchConfig.D_KURD_9) {
         if (_state.value.isRecording) return
         stopPlayback()
         liveEvents.clear()
-        recordStartMs = System.currentTimeMillis()
+        recordStartMs = clock.nowMillis()
         _state.update {
             it.copy(
                 isRecording = true,
@@ -81,24 +88,51 @@ class PerformanceRecorder(
                 recordingEventsCount = 0
             )
         }
+        pitchDetector.startListening(
+            scaleConfig = scaleConfig,
+            onStrikeDetected = { pitch, timestampNanos ->
+                pitch.matchedNoteNumber?.let { noteNumber ->
+                    recordStrike(
+                        noteNumber = noteNumber,
+                        velocity = pitch.amplitude,
+                        timestampMs = timestampNanos / 1_000_000L
+                    )
+                }
+            }
+        )
     }
 
-    fun recordStrike(noteNumber: Int, isAccent: Boolean = false, velocity: Float = 0.85f) {
+    fun recordStrike(
+        noteNumber: Int,
+        isAccent: Boolean = false,
+        velocity: Float = 0.85f,
+        timestampMs: Long = clock.nowMillis(),
+        durationMs: Long? = null,
+        hand: String? = null
+    ) {
         if (!_state.value.isRecording) return
-        val offset = System.currentTimeMillis() - recordStartMs
+        val offset = (timestampMs - recordStartMs).coerceAtLeast(0L)
         val event = RecordedStrikeEvent(
             noteNumber = noteNumber,
             timestampMs = offset,
             velocity = velocity,
-            isAccent = isAccent
+            isAccent = isAccent,
+            durationMs = durationMs,
+            hand = hand
         )
         liveEvents.add(event)
         _state.update { it.copy(recordingEventsCount = liveEvents.size) }
     }
 
-    fun stopRecording(scaleName: String = "D Kurd", customTitle: String? = null): RecordedTrack? {
+    fun stopRecording(
+        scaleName: String = "D Kurd",
+        customTitle: String? = null,
+        bpm: Int = 70,
+        timeSignature: String = "4/4"
+    ): RecordedTrack? {
         if (!_state.value.isRecording) return null
-        val duration = System.currentTimeMillis() - recordStartMs
+        pitchDetector.stopListening()
+        val duration = clock.nowMillis() - recordStartMs
         _state.update { it.copy(isRecording = false) }
 
         if (liveEvents.isEmpty()) return null
@@ -111,7 +145,9 @@ class PerformanceRecorder(
             date = dateFormat.format(Date()),
             scaleId = scaleName,
             durationMs = duration.coerceAtLeast(500L),
-            events = ArrayList(liveEvents)
+            events = ArrayList(liveEvents),
+            bpm = bpm,
+            timeSignature = timeSignature
         )
 
         val updatedTracks = listOf(track) + _state.value.tracks
@@ -124,7 +160,7 @@ class PerformanceRecorder(
         stopPlayback()
         _state.update { it.copy(playingTrackId = track.id) }
 
-        playbackJob = CoroutineScope(Dispatchers.Default).launch {
+        playbackJob = scope.launch {
             val speed = _state.value.playbackSpeed
             val isLoop = _state.value.isLooping
 
@@ -156,6 +192,16 @@ class PerformanceRecorder(
         playbackJob?.cancel()
         playbackJob = null
         _state.update { it.copy(playingTrackId = null) }
+    }
+
+    fun release() {
+        if (_state.value.isRecording) {
+            pitchDetector.stopListening()
+            _state.update { it.copy(isRecording = false) }
+        }
+        stopPlayback()
+        pitchDetector.release()
+        scope.cancel()
     }
 
     fun setPlaybackSpeed(speed: Float) {
@@ -190,6 +236,8 @@ class PerformanceRecorder(
         root.put("date", track.date)
         root.put("scaleId", track.scaleId)
         root.put("durationMs", track.durationMs)
+        root.put("bpm", track.bpm)
+        root.put("timeSignature", track.timeSignature)
 
         val eventsArray = JSONArray()
         for (e in track.events) {
@@ -198,6 +246,8 @@ class PerformanceRecorder(
             evObj.put("timestampMs", e.timestampMs)
             evObj.put("velocity", e.velocity)
             evObj.put("isAccent", e.isAccent)
+            e.durationMs?.let { evObj.put("durationMs", it) }
+            e.hand?.let { evObj.put("hand", it) }
             eventsArray.put(evObj)
         }
         root.put("events", eventsArray)

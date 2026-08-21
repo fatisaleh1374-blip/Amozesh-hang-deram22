@@ -13,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.example.model.Subdivision
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -20,6 +21,14 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class HandpanTimingAndPatternTest {
+
+    @Test
+    fun musicalTimingUsesBpmAndSubdivision() {
+        assertEquals(1_000_000_000L, MusicalTiming.beatDurationNanos(60))
+        assertEquals(500_000_000L, MusicalTiming.beatDurationNanos(120))
+        assertEquals(250_000_000L, MusicalTiming.subdivisionDurationNanos(120, Subdivision.EIGHTH))
+        assertEquals(1_500_000_000L, MusicalTiming.beatToNanos(1.5, 60))
+    }
 
     @Test
     fun testBpmBeatIntervalCalculation() {

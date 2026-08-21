@@ -1,8 +1,10 @@
 package com.example.ui.components
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -69,6 +71,9 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 
 @Composable
 fun PerformanceRecorderDialog(
@@ -78,6 +83,22 @@ fun PerformanceRecorderDialog(
     val context = LocalContext.current
     val recorderState by viewModel.performanceRecorder.state.collectAsStateWithLifecycle()
     var customTrackName by remember { mutableStateOf("") }
+    var hasMicPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasMicPermission = granted
+        if (granted) {
+            viewModel.performanceRecorder.startRecording(viewModel.appUiState.value.currentScaleConfig)
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -176,16 +197,25 @@ fun PerformanceRecorderDialog(
                                 onClick = {
                                     if (recorderState.isRecording) {
                                         val scaleName = viewModel.appUiState.value.currentInstrumentProfile.scaleName
+                                        val practiceState = viewModel.practiceEngine.uiState.value
                                         val track = viewModel.performanceRecorder.stopRecording(
                                             scaleName = scaleName,
-                                            customTitle = customTrackName.ifBlank { null }
+                                            customTitle = customTrackName.ifBlank { null },
+                                            bpm = practiceState.bpm,
+                                            timeSignature = practiceState.pattern?.timeSignature?.displayName ?: "4/4"
                                         )
                                         customTrackName = ""
                                         if (track != null) {
                                             Toast.makeText(context, "قطعه «${track.title}» در پایگاه‌داده ذخیره شد", Toast.LENGTH_SHORT).show()
                                         }
                                     } else {
-                                        viewModel.performanceRecorder.startRecording()
+                                        if (hasMicPermission) {
+                                            viewModel.performanceRecorder.startRecording(
+                                                viewModel.appUiState.value.currentScaleConfig
+                                            )
+                                        } else {
+                                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                        }
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(

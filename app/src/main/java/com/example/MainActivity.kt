@@ -1,10 +1,14 @@
 package com.example
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
@@ -25,11 +29,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -37,6 +46,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.AppScreen
 import com.example.ui.HandpanViewModel
@@ -52,6 +62,8 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.CharcoalDark
 import com.example.ui.theme.HandpanGold
 import com.example.ui.theme.MyApplicationTheme
+import com.example.model.HandpanPattern
+import com.example.model.PracticeInputMode
 
 class MainActivity : ComponentActivity() {
     private val viewModel: HandpanViewModel by viewModels()
@@ -62,6 +74,34 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val appState by viewModel.appUiState.collectAsStateWithLifecycle()
+            var pendingPracticePattern by remember { mutableStateOf<HandpanPattern?>(null) }
+            var showMicrophoneExplanation by remember { mutableStateOf(false) }
+            val microphonePermissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { granted ->
+                if (granted) {
+                    pendingPracticePattern?.let(viewModel::startPractice)
+                    pendingPracticePattern = null
+                } else {
+                    showMicrophoneExplanation = true
+                }
+            }
+
+            fun startPracticeSafely(pattern: HandpanPattern) {
+                val needsMicrophone = viewModel.appUiState.value.defaultPracticeInputMode ==
+                    PracticeInputMode.REAL_HANDPAN
+                val hasPermission = ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+
+                if (!needsMicrophone || hasPermission) {
+                    viewModel.startPractice(pattern)
+                } else {
+                    pendingPracticePattern = pattern
+                    microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            }
 
             MyApplicationTheme(darkTheme = appState.darkTheme) {
                 // Persian RTL Direction Provider
@@ -104,13 +144,13 @@ class MainActivity : ComponentActivity() {
                                 AppScreen.HOME -> HomeScreen(
                                     viewModel = viewModel,
                                     onNavigate = { viewModel.navigateTo(it) },
-                                    onStartPractice = { pattern -> viewModel.startPractice(pattern) }
+                                    onStartPractice = ::startPracticeSafely
                                 )
                                 AppScreen.EXERCISE_LIBRARY -> ExerciseLibraryScreen(
                                     viewModel = viewModel,
                                     onBack = { viewModel.navigateTo(AppScreen.HOME) },
                                     onNavigate = { viewModel.navigateTo(it) },
-                                    onStartPractice = { pattern -> viewModel.startPractice(pattern) }
+                                    onStartPractice = ::startPracticeSafely
                                 )
                                 AppScreen.PRACTICE -> PracticeScreen(
                                     viewModel = viewModel,
@@ -184,10 +224,33 @@ class MainActivity : ComponentActivity() {
                             if (appState.showLessonStudioDialog) {
                                 com.example.ui.components.InteractiveLessonStudioDialog(
                                     viewModel = viewModel,
-                                    onStartPractice = { pattern ->
-                                        viewModel.startPractice(pattern)
-                                    },
+                                    onStartPractice = ::startPracticeSafely,
                                     onDismiss = { viewModel.dismissLessonStudioDialog() }
+                                )
+                            }
+
+                            if (showMicrophoneExplanation) {
+                                AlertDialog(
+                                    onDismissRequest = { showMicrophoneExplanation = false },
+                                    title = { Text("دسترسی به میکروفن لازم است") },
+                                    text = {
+                                        Text("برای ارزیابی نوازندگی با هنگ‌درام واقعی، برنامه باید صدای ضربه‌ها را از میکروفن دریافت کند. می‌توانید مجوز را از تنظیمات فعال کنید یا با ساز مجازی تمرین کنید.")
+                                    },
+                                    confirmButton = {
+                                        Button(onClick = {
+                                            showMicrophoneExplanation = false
+                                            viewModel.setPracticeInputMode(PracticeInputMode.VIRTUAL_HANDPAN)
+                                            pendingPracticePattern?.let(viewModel::startPractice)
+                                            pendingPracticePattern = null
+                                        }) {
+                                            Text("تمرین با ساز مجازی")
+                                        }
+                                    },
+                                    dismissButton = {
+                                        Button(onClick = { showMicrophoneExplanation = false }) {
+                                            Text("بعداً")
+                                        }
+                                    }
                                 )
                             }
                         }

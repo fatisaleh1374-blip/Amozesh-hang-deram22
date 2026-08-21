@@ -20,6 +20,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import androidx.test.core.app.ApplicationProvider
+import android.content.Context
 
 class FakePracticeClock(var initialNanos: Long = 1_000_000_000L) : PracticeClock {
     var currentNanos = initialNanos
@@ -100,6 +102,7 @@ class RealHandpanArchitectureTestSuite {
     @Test
     fun test04_acousticEvaluatorEvaluatesAccurateHit() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        evaluator.notifyExpectedSlice(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
         // Target note at 0ms is D3 (approx 146.83 Hz)
         val result = evaluator.evaluateDetectedPitch(146.8f, 0.9f)
         assertNotNull(result)
@@ -110,6 +113,7 @@ class RealHandpanArchitectureTestSuite {
     @Test
     fun test05_wrongPitchRegistersWrongNote() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        evaluator.notifyExpectedSlice(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
         // Note 0 is D3 (146.83Hz). F3 is note 2 (174.61Hz)
         val result = evaluator.evaluateDetectedPitch(174.6f, 0.9f)
         assertNotNull(result)
@@ -120,9 +124,11 @@ class RealHandpanArchitectureTestSuite {
     @Test
     fun test06_earlyHitRegistration() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        val expected = testPattern.events[1]
+        evaluator.notifyExpectedSlice(listOf(expected), fakeClock.currentNanos + 500_000_000L)
         // Advance clock to right before next note (-120ms)
         fakeClock.advanceMs(380) // expected note is at 500ms
-        val result = evaluator.evaluateDetectedPitch(testPattern.events[1].noteNumber.let { NotePitchConfig.D_KURD_9.baseFrequencies[it] ?: 146.8f }, 0.9f)
+        val result = evaluator.evaluateDetectedPitch(expected.noteNumber.let { NotePitchConfig.D_KURD_9.baseFrequencies[it] ?: 146.8f }, 0.9f)
         assertNotNull(result)
         assertEquals(StrikeAccuracyStatus.EARLY, result?.status)
     }
@@ -131,8 +137,10 @@ class RealHandpanArchitectureTestSuite {
     @Test
     fun test07_lateHitRegistration() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        val expected = testPattern.events[1]
+        evaluator.notifyExpectedSlice(listOf(expected), fakeClock.currentNanos + 500_000_000L)
         fakeClock.advanceMs(620) // expected note is at 500ms
-        val result = evaluator.evaluateDetectedPitch(testPattern.events[1].noteNumber.let { NotePitchConfig.D_KURD_9.baseFrequencies[it] ?: 146.8f }, 0.9f)
+        val result = evaluator.evaluateDetectedPitch(expected.noteNumber.let { NotePitchConfig.D_KURD_9.baseFrequencies[it] ?: 146.8f }, 0.9f)
         assertNotNull(result)
         assertEquals(StrikeAccuracyStatus.LATE, result?.status)
     }
@@ -221,6 +229,7 @@ class RealHandpanArchitectureTestSuite {
     @Test
     fun test17_evaluatorAccuracyCalculation() {
         evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        evaluator.notifyExpectedSlice(listOf(testPattern.events.first { !it.isRest }), fakeClock.currentNanos)
         evaluator.evaluateDetectedPitch(146.83f, 0.95f)
         val state = evaluator.state.value
         assertEquals(1, state.perfectCount)
@@ -255,5 +264,106 @@ class RealHandpanArchitectureTestSuite {
         practiceEngine.setInputMode(PracticeInputMode.REAL_HANDPAN)
         assertEquals(PracticeInputMode.REAL_HANDPAN, practiceEngine.uiState.value.inputMode)
         assertTrue(practiceEngine.uiState.value.acousticAssessmentEnabled)
+    }
+
+    @Test
+    fun test21_evaluatorUsesPatternBpmInsteadOfFixed500Milliseconds() {
+        val bpm60Pattern = HandpanPattern(
+            id = "bpm_60",
+            title = "BPM 60",
+            description = "timing test",
+            bpm = 60,
+            bars = 1,
+            events = listOf(NoteEvent(noteNumber = 0, beatPosition = 1.0))
+        )
+        evaluator.startAssessment(bpm60Pattern, NotePitchConfig.D_KURD_9, bpm = 60)
+        evaluator.notifyExpectedSlice(listOf(bpm60Pattern.events.first()), fakeClock.currentNanos + 1_000_000_000L)
+        fakeClock.advanceMs(1000)
+
+        val result = evaluator.evaluateDetectedPitch(146.83f, 0.9f)
+
+        assertNotNull(result)
+        assertEquals(StrikeAccuracyStatus.PERFECT, result?.status)
+    }
+
+    @Test
+    fun test22_performanceRecorderCapturesEventFromUserStrike() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val recorder = PerformanceRecorder(context, fakeAudio)
+
+        recorder.startRecording()
+        recorder.recordStrike(noteNumber = 3, isAccent = true, velocity = 1.0f, hand = "R")
+        val track = recorder.stopRecording(scaleName = "D Kurd")
+
+        assertNotNull(track)
+        assertEquals(1, track?.events?.size)
+        assertEquals(3, track?.events?.first()?.noteNumber)
+        assertEquals("R", track?.events?.first()?.hand)
+        recorder.release()
+    }
+
+    @Test
+    fun test23_combinesCorrectNoteWithGoodTimingFromAuthoritativeTarget() {
+        val pattern = HandpanPattern(
+            id = "combined_good",
+            title = "Combined",
+            description = "combined timing test",
+            bpm = 60,
+            bars = 1,
+            events = listOf(NoteEvent(noteNumber = 0, beatPosition = 0.0))
+        )
+        evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
+        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+        fakeClock.advanceMs(60)
+
+        val result = evaluator.evaluateDetectedPitch(146.83f, 0.95f)
+
+        assertNotNull(result)
+        assertTrue(result?.noteCorrect == true)
+        assertEquals(TimingAccuracyStatus.GOOD, result?.timingStatus)
+        assertEquals(StrikeAccuracyStatus.GOOD, result?.status)
+        assertEquals(60L, result?.deviationMs)
+    }
+
+    @Test
+    fun test24_reportsWrongNoteAndLateTimingIndependently() {
+        val pattern = HandpanPattern(
+            id = "wrong_late",
+            title = "Wrong and late",
+            description = "combined mismatch test",
+            bpm = 60,
+            bars = 1,
+            events = listOf(NoteEvent(noteNumber = 0, beatPosition = 0.0))
+        )
+        evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
+        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+        fakeClock.advanceMs(120)
+
+        val result = evaluator.evaluateDetectedPitch(261.63f, 0.95f)
+
+        assertNotNull(result)
+        assertTrue(result?.noteCorrect == false)
+        assertEquals(TimingAccuracyStatus.LATE, result?.timingStatus)
+        assertEquals(StrikeAccuracyStatus.WRONG_NOTE, result?.status)
+        assertEquals(120L, result?.deviationMs)
+    }
+
+    @Test
+    fun test25_expiresUnmatchedExpectedEventAsMissed() {
+        val pattern = HandpanPattern(
+            id = "missed",
+            title = "Missed",
+            description = "missed event test",
+            bpm = 60,
+            bars = 1,
+            events = listOf(NoteEvent(noteNumber = 0, beatPosition = 0.0))
+        )
+        evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9, bpm = 60)
+        evaluator.notifyExpectedSlice(pattern.events, fakeClock.currentNanos)
+        fakeClock.advanceMs(200)
+        evaluator.notifyExpectedSlice(emptyList(), fakeClock.currentNanos)
+
+        assertEquals(1, evaluator.state.value.missedCount)
+        assertEquals(1, evaluator.state.value.totalStrikesEvaluated)
     }
 }
