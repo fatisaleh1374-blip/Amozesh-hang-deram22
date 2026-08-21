@@ -2,6 +2,8 @@ package com.example.audio
 
 import com.example.model.NoteEvent
 import com.example.model.TimeSignature
+import com.example.model.MusicalTarget
+import com.example.model.MusicalTargetIdentity
 
 /**
  * Pre-indexed time slice in a HandpanPattern.
@@ -12,7 +14,8 @@ data class ScheduledTimeSlice(
     val barIndex: Int,
     val beatInBar: Double,
     val isDownbeat: Boolean,
-    val events: List<NoteEvent>
+    val events: List<NoteEvent>,
+    val target: MusicalTarget?
 )
 
 /**
@@ -33,7 +36,12 @@ class PatternScheduler {
             totalBars: Int,
             startBar: Int = 1,
             endBar: Int = totalBars,
-            timeSignature: TimeSignature = TimeSignature.Common44
+            timeSignature: TimeSignature = TimeSignature.Common44,
+            assessmentSessionId: String = "unspecified-session",
+            patternId: String = "unspecified-pattern",
+            loopIndex: Int = 0,
+            scheduleStartTimestampNanos: Long = 0L,
+            bpm: Int = 60
         ): List<ScheduledTimeSlice> {
             val clampedStart = startBar.coerceIn(1, totalBars)
             val clampedEnd = endBar.coerceIn(clampedStart, totalBars)
@@ -59,7 +67,7 @@ class PatternScheduler {
 
             val sortedPositions = beatPositions.sorted()
 
-            return sortedPositions.map { pos ->
+            return sortedPositions.mapIndexed { sequenceIndex, pos ->
                 val barIndex = (pos / beatsPerBar).toInt() + 1
                 val beatInBar = (pos % beatsPerBar) + 1.0
                 val beatInBarIndex = (pos % beatsPerBar).toInt() + 1
@@ -70,12 +78,32 @@ class PatternScheduler {
                     Math.abs(it.beatPosition - pos) < BEAT_EPSILON
                 }
 
+                val target = matchingEvents.takeIf { it.isNotEmpty() }?.let { targetEvents ->
+                    val targetId = "$assessmentSessionId-$patternId-loop-$loopIndex-target-$sequenceIndex"
+                    MusicalTarget(
+                        MusicalTargetIdentity(
+                            sessionId = assessmentSessionId,
+                            patternId = patternId,
+                            loopId = "loop-$loopIndex",
+                            sequenceIndex = sequenceIndex,
+                            targetId = targetId,
+                            beatIndex = kotlin.math.floor(pos).toInt(),
+                            subdivisionIndex = kotlin.math.round((pos - kotlin.math.floor(pos)) * 16.0).toInt(),
+                            expectedTimestampNanos = scheduleStartTimestampNanos +
+                                MusicalTiming.beatToNanos(pos - startBeat, bpm, timeSignature),
+                            expectedNotes = targetEvents.map(NoteEvent::noteNumber).toSet(),
+                            chordId = targetId
+                        )
+                    )
+                }
+
                 ScheduledTimeSlice(
                     beatPosition = pos,
                     barIndex = barIndex,
                     beatInBar = beatInBar,
                     isDownbeat = isDownbeat,
-                    events = matchingEvents
+                    events = matchingEvents,
+                    target = target
                 )
             }
         }

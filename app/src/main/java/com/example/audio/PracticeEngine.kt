@@ -196,6 +196,7 @@ class PracticeEngine(
             val currentBpm = currentState.effectiveBpm
             val startBar = if (currentState.isLoopEnabled) currentState.loopStartBar else 1
             val endBar = if (currentState.isLoopEnabled) currentState.loopEndBar else pattern.bars
+            val loopStartNanos = clock.nowNanos()
 
             // Build lookahead pre-indexed schedule slices for the current bar loop range
             val schedule = PatternScheduler.buildSchedule(
@@ -204,7 +205,12 @@ class PracticeEngine(
                 totalBars = pattern.bars,
                 startBar = startBar,
                 endBar = endBar,
-                timeSignature = pattern.timeSignature
+                timeSignature = pattern.timeSignature,
+                assessmentSessionId = "practice-${pattern.id}-$sessionStartedNanos",
+                patternId = pattern.id,
+                loopIndex = currentLoopIteration,
+                scheduleStartTimestampNanos = loopStartNanos,
+                bpm = currentBpm
             )
 
             if (schedule.isEmpty()) {
@@ -213,19 +219,13 @@ class PracticeEngine(
             }
 
             val loopStartBeat = ((startBar - 1) * beatsPerBar).toDouble()
-            val loopStartNanos = clock.nowNanos()
-
             for (slice in schedule) {
                 val sliceOffsetBeats = slice.beatPosition - loopStartBeat
                 val targetSliceNanos = loopStartNanos +
                     MusicalTiming.beatToNanos(sliceOffsetBeats, currentBpm, pattern.timeSignature)
 
                 if (acousticEvaluator.state.value.isEnabled) {
-                    acousticEvaluator.notifyExpectedSlice(
-                        events = slice.events,
-                        targetTimestampNanos = targetSliceNanos,
-                        loopId = "loop-$currentLoopIteration"
-                    )
+                    slice.target?.let(acousticEvaluator::notifyExpectedTarget)
                 }
 
                 // Wait until monotonic timestamp for this slice
