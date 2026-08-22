@@ -1,4 +1,14 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.util.Properties
+
+val localProperties = Properties().apply {
+  val propertiesFile = rootProject.file("local.properties")
+  if (propertiesFile.isFile) propertiesFile.inputStream().use(::load)
+}
+
+fun signingValue(propertyName: String, environmentName: String): String? =
+  System.getenv(environmentName)?.takeIf { it.isNotBlank() }
+    ?: localProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }
 
 plugins {
   alias(libs.plugins.android.application)
@@ -25,18 +35,21 @@ android {
 
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH")
+      val keystorePath = signingValue("release.storeFile", "KEYSTORE_PATH")
+        val configuredStorePassword = signingValue("release.storePassword", "STORE_PASSWORD")
+        val configuredKeyAlias = signingValue("release.keyAlias", "KEY_ALIAS")
+        val configuredKeyPassword = signingValue("release.keyPassword", "KEY_PASSWORD")
         val releaseSigningConfigured = !keystorePath.isNullOrBlank() &&
             file(keystorePath).exists() &&
-            !System.getenv("STORE_PASSWORD").isNullOrBlank() &&
-            !System.getenv("KEY_ALIAS").isNullOrBlank() &&
-            !System.getenv("KEY_PASSWORD").isNullOrBlank()
+            !configuredStorePassword.isNullOrBlank() &&
+            !configuredKeyAlias.isNullOrBlank() &&
+            !configuredKeyPassword.isNullOrBlank()
 
         if (releaseSigningConfigured) {
             storeFile = file(keystorePath!!)
-            storePassword = System.getenv("STORE_PASSWORD")
-            keyAlias = System.getenv("KEY_ALIAS")
-            keyPassword = System.getenv("KEY_PASSWORD")
+            this.storePassword = configuredStorePassword
+            this.keyAlias = configuredKeyAlias
+            this.keyPassword = configuredKeyPassword
         } else {
             // Keep non-release tasks configurable; release validation below fails securely.
             storeFile = layout.buildDirectory.file("missing-release.keystore").get().asFile
@@ -83,12 +96,15 @@ gradle.taskGraph.whenReady {
       (task.name == "assembleRelease" || task.name == "bundleRelease")
   }
   if (isReleaseTask) {
-    val keystorePath = System.getenv("KEYSTORE_PATH")
+    val keystorePath = signingValue("release.storeFile", "KEYSTORE_PATH")
+    val configuredStorePassword = signingValue("release.storePassword", "STORE_PASSWORD")
+    val configuredKeyAlias = signingValue("release.keyAlias", "KEY_ALIAS")
+    val configuredKeyPassword = signingValue("release.keyPassword", "KEY_PASSWORD")
     val configured = !keystorePath.isNullOrBlank() &&
       file(keystorePath).exists() &&
-      !System.getenv("STORE_PASSWORD").isNullOrBlank() &&
-      !System.getenv("KEY_ALIAS").isNullOrBlank() &&
-      !System.getenv("KEY_PASSWORD").isNullOrBlank()
+      !configuredStorePassword.isNullOrBlank() &&
+      !configuredKeyAlias.isNullOrBlank() &&
+      !configuredKeyPassword.isNullOrBlank()
     check(configured) {
       "Official release signing is required. Set KEYSTORE_PATH, STORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD."
     }

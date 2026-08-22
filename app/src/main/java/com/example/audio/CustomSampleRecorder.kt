@@ -106,7 +106,7 @@ class CustomSampleRecorder(private val context: Context) {
 
             recordingJob = CoroutineScope(Dispatchers.IO).launch {
                 var totalBytesRead = 0L
-                val startTime = System.currentTimeMillis()
+                val startTimeNanos = System.nanoTime()
                 var peakAmplitude = 0
                 var clippingCount = 0
                 var sumSquares = 0.0
@@ -146,13 +146,13 @@ class CustomSampleRecorder(private val context: Context) {
                                 }
                             }
 
-                            if (System.currentTimeMillis() - startTime >= maxDurationMs) {
+                            if ((System.nanoTime() - startTimeNanos) / 1_000_000L >= maxDurationMs) {
                                 break
                             }
                         }
                     }
 
-                    val durationMs = System.currentTimeMillis() - startTime
+                    val durationMs = (System.nanoTime() - startTimeNanos) / 1_000_000L
                     val overallRms = if (totalSamples > 0) kotlin.math.sqrt(sumSquares / totalSamples).toFloat() else 0f
                     val normalizedPeak = peakAmplitude / 32767f
 

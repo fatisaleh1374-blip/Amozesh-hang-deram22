@@ -1,5 +1,6 @@
 package com.example.audio
 
+import com.example.BuildConfig
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.SoundPool
@@ -134,7 +135,9 @@ open class AudioEngine(private val context: Context? = null) {
                 val soundId = pool.load(customFile.absolutePath, 1)
                 noteSoundMap[noteNumber] = soundId
                 accentSoundMap[noteNumber] = soundId
-                Log.d("AudioEngine", "Loaded custom real recorded sample for note $noteNumber from ${customFile.absolutePath}")
+                if (BuildConfig.DEBUG) {
+                    Log.d("AudioEngine", "Loaded custom real recorded sample for note $noteNumber")
+                }
                 return
             } catch (e: Exception) {
                 Log.e("AudioEngine", "Failed to load custom sample for note $noteNumber, falling back to synth", e)
