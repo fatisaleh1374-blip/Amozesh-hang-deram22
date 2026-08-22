@@ -3,7 +3,6 @@ package com.example.audio
 import com.example.model.Subdivision
 import com.example.model.TimeSignature
 import com.example.util.HapticHelper
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob

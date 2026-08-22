@@ -86,7 +86,7 @@ class PersistentDataArchitectureTest {
             events = events
         )
 
-        val entity = RecordingTrackEntity.fromDomain(track)
+        val entity = track.toEntity()
         recordingDao.insertRecordingTrack(entity)
 
         val retrievedEntity = recordingDao.getRecordingTrackById("track_test_123")
@@ -137,7 +137,7 @@ class PersistentDataArchitectureTest {
             timelineEvents = listOf(timelineEvent)
         )
 
-        recordingDao.insertRecordingTrack(RecordingTrackEntity.fromDomain(track))
+        recordingDao.insertRecordingTrack(track.toEntity())
 
         val persisted = recordingDao.getRecordingTrackById(track.id)!!.toDomain()
         assertEquals(setOf(0, 1), persisted.timelineEvents.single().expectedNotes)

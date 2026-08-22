@@ -5,6 +5,8 @@ import com.example.data.local.PatternDao
 import com.example.data.local.PatternEntity
 import com.example.data.local.PracticeProgressDao
 import com.example.data.local.PracticeProgressEntity
+import com.example.data.local.toEntity
+import com.example.data.local.toDomain
 import com.example.model.HandpanPattern
 import com.example.model.PatternCategory
 import com.example.model.PracticeProgress
@@ -134,7 +136,7 @@ class HandpanRepository(
     }
 
     suspend fun saveRecordingTrack(track: com.example.audio.RecordedTrack) {
-        recordingTrackDao.insertRecordingTrack(com.example.data.local.RecordingTrackEntity.fromDomain(track))
+        recordingTrackDao.insertRecordingTrack(track.toEntity())
     }
 
     suspend fun deleteRecordingTrack(id: String) {

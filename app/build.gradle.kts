@@ -79,7 +79,8 @@ ksp {
 
 gradle.taskGraph.whenReady {
   val isReleaseTask = allTasks.any { task ->
-    task.name.contains("Release", ignoreCase = true) && task.path.startsWith(":app:")
+    task.path.startsWith(":app:") &&
+      (task.name == "assembleRelease" || task.name == "bundleRelease")
   }
   if (isReleaseTask) {
     val keystorePath = System.getenv("KEYSTORE_PATH")

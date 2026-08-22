@@ -218,7 +218,7 @@ fun RhythmTrainerScreen(
         )
         recentTaps.add(0, entry)
         if (recentTaps.size > 8) {
-            recentTaps.removeLast()
+            recentTaps.removeAt(recentTaps.lastIndex)
         }
     }
 

@@ -1,6 +1,7 @@
 package com.example.audio
 
 import com.example.model.HandpanPattern
+import com.example.model.NoteEvent
 import com.example.model.NotePitchConfig
 import com.example.model.DetectedStrikeEvent
 import com.example.model.StrikeClassification
@@ -11,7 +12,6 @@ import com.example.model.ScoreCounters
 import com.example.model.AssessmentEventType
 import com.example.model.AssessmentTimeline
 import com.example.model.AssessmentTimelineEvent
-import com.example.model.MusicalTarget
 import com.example.model.MusicalTargetIdentity
 import com.example.model.MusicalTargetMatcher
 import com.example.model.TargetRegistry
@@ -196,7 +196,7 @@ class AcousticPracticeEvaluator(
         analysisSubscription?.close()
         analysisSubscription = analysisSession.acquire(
             scaleConfig = scaleConfig,
-            onContinuousPitch = { pitch ->
+            onPitch = { pitch ->
                 _state.update {
                     it.copy(
                         liveFrequencyHz = pitch.frequencyHz,
@@ -228,7 +228,7 @@ class AcousticPracticeEvaluator(
         handleStrikeDetected(
             DetectedStrikeEvent(
                 id = "manual-$timestampNanos-$frequencyHz-$confidence",
-                sessionId = "manual",
+                sessionId = assessmentSessionId,
                 monotonicTimestampNanos = timestampNanos,
                 detectedFrequencyHz = frequencyHz,
                 detectedNoteName = noteName,
@@ -281,6 +281,10 @@ class AcousticPracticeEvaluator(
         _state.update { it.copy(isSummaryDialogVisible = false) }
     }
 
+    internal fun expireTargetsAt(nowNanos: Long) {
+        if (_state.value.isEnabled && _state.value.isListening) expirePendingEvents(nowNanos)
+    }
+
     fun resetStats() {
         timingWindowList.clear()
         expectedNoteEvents = emptyList()
@@ -317,6 +321,10 @@ class AcousticPracticeEvaluator(
     @Synchronized
     fun notifyExpectedTarget(target: MusicalTarget) {
         if (!_state.value.isEnabled || !_state.value.isListening) return
+        if (assessmentSessionId != target.identity.sessionId) {
+            assessmentSessionId = target.identity.sessionId
+        }
+        expirePendingEvents(clock.nowNanos())
         targetRegistry.register(target)
         target.identity.expectedNotes.forEachIndexed { index, noteNumber ->
             timeline.append(
@@ -606,6 +614,7 @@ class AcousticPracticeEvaluator(
                 StrikeAccuracyStatus.LATE -> late++
                 StrikeAccuracyStatus.WRONG_NOTE -> wrong++
                 StrikeAccuracyStatus.UNKNOWN_NOTE -> unknown++
+                    StrikeAccuracyStatus.EXTRA_STRIKE -> {}
                 StrikeAccuracyStatus.MISSED -> {}
             }
 

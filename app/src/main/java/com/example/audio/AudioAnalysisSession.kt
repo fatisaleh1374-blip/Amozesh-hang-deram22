@@ -17,6 +17,7 @@ class AudioAnalysisSession(
     private val sessionId = "audio-${System.identityHashCode(this)}"
     private val eventSequence = AtomicLong(0L)
     private var listening = false
+    private var microphoneLease: AudioResourceCoordinator.Lease? = null
 
     @Synchronized
     fun acquire(
@@ -25,32 +26,43 @@ class AudioAnalysisSession(
         onPitch: (DetectedPitchResult) -> Unit = {}
     ): Subscription {
         val listener = Listener(onStrike, onPitch)
+        if (!listening) {
+            microphoneLease = AudioResourceCoordinator.tryAcquire(sessionId)
+                ?: return Subscription {}
+        }
         listeners += listener
         if (!listening) {
-            detector.startListening(
-                scaleConfig = scaleConfig,
-                onStrikeDetected = { result, timestamp ->
-                    val event = DetectedStrikeEvent(
-                        id = "$sessionId-${eventSequence.incrementAndGet()}",
-                        sessionId = sessionId,
-                        monotonicTimestampNanos = timestamp,
-                        detectedFrequencyHz = result.frequencyHz,
-                        detectedNoteName = result.noteName,
-                        detectedCentsOffset = result.centsOffset,
-                        detectedNote = result.matchedNoteNumber,
-                        matchedPitchDiffHz = result.matchedPitchDiffHz,
-                        pitchConfidence = result.confidence,
-                        onsetStrength = result.amplitude,
-                        energy = result.amplitude,
-                        pitchValid = result.matchedNoteNumber != null && result.confidence >= 0.5f
-                    )
-                    listeners.forEach { it.onStrike(event) }
-                },
-                onContinuousPitch = { result ->
-                    listeners.forEach { it.onPitch(result) }
-                }
-            )
-            listening = true
+            try {
+                detector.startListening(
+                    scaleConfig = scaleConfig,
+                    onStrikeDetected = { result, timestamp ->
+                        val event = DetectedStrikeEvent(
+                            id = "$sessionId-${eventSequence.incrementAndGet()}",
+                            sessionId = sessionId,
+                            monotonicTimestampNanos = timestamp,
+                            detectedFrequencyHz = result.frequencyHz,
+                            detectedNoteName = result.noteName,
+                            detectedCentsOffset = result.centsOffset,
+                            detectedNote = result.matchedNoteNumber,
+                            matchedPitchDiffHz = result.matchedPitchDiffHz,
+                            pitchConfidence = result.confidence,
+                            onsetStrength = result.amplitude,
+                            energy = result.amplitude,
+                            pitchValid = result.matchedNoteNumber != null && result.confidence >= 0.5f
+                        )
+                        listeners.forEach { it.onStrike(event) }
+                    },
+                    onContinuousPitch = { result ->
+                        listeners.forEach { it.onPitch(result) }
+                    }
+                )
+                listening = true
+            } catch (error: RuntimeException) {
+                listeners -= listener
+                listening = false
+                microphoneLease?.close()
+                microphoneLease = null
+            }
         }
         return Subscription { release(listener) }
     }
@@ -61,6 +73,8 @@ class AudioAnalysisSession(
         if (listeners.isEmpty() && listening) {
             detector.stopListening()
             listening = false
+            microphoneLease?.close()
+            microphoneLease = null
         }
     }
 
@@ -71,6 +85,8 @@ class AudioAnalysisSession(
                 detector.stopListening()
                 listening = false
             }
+            microphoneLease?.close()
+            microphoneLease = null
         }
         detector.release()
     }

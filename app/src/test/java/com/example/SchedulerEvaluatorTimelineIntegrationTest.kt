@@ -65,6 +65,7 @@ class SchedulerEvaluatorTimelineIntegrationTest {
             assessmentSessionId = "assessment-2",
             patternId = "pattern-2",
             loopIndex = 0,
+            scheduleStartTimestampNanos = clock.currentNanos,
             bpm = 60
         ).single { it.target != null }.target!!
         evaluator.startAssessment(

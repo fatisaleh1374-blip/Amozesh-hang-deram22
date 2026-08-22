@@ -26,6 +26,7 @@ class CustomSampleRecorder(private val context: Context) {
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
     private var isRecording = false
+    private var microphoneLease: AudioResourceCoordinator.Lease? = null
 
     companion object {
         private const val TAG = "CustomSampleRecorder"
@@ -70,6 +71,12 @@ class CustomSampleRecorder(private val context: Context) {
             stopRecording()
         }
 
+        microphoneLease = AudioResourceCoordinator.tryAcquire("custom-sample-recorder")
+        if (microphoneLease == null) {
+            onFinished(false, null)
+            return
+        }
+
         val bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT).coerceAtLeast(4096)
         
         try {
@@ -83,6 +90,10 @@ class CustomSampleRecorder(private val context: Context) {
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Log.e(TAG, "AudioRecord initialization failed")
+                audioRecord?.release()
+                audioRecord = null
+                microphoneLease?.close()
+                microphoneLease = null
                 onFinished(false, null)
                 return
             }
@@ -185,11 +196,15 @@ class CustomSampleRecorder(private val context: Context) {
                         audioRecord?.release()
                     } catch (_: Exception) {}
                     audioRecord = null
+                    microphoneLease?.close()
+                    microphoneLease = null
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start recording", e)
             isRecording = false
+            microphoneLease?.close()
+            microphoneLease = null
             onFinished(false, null)
         }
     }
@@ -205,6 +220,8 @@ class CustomSampleRecorder(private val context: Context) {
             // ignore
         }
         audioRecord = null
+        microphoneLease?.close()
+        microphoneLease = null
     }
 
     fun release() {

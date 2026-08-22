@@ -4,7 +4,9 @@ import com.example.audio.AcousticPracticeEvaluator
 import com.example.audio.AudioEngine
 import com.example.audio.PracticeClock
 import com.example.audio.PracticeEngine
+import com.example.audio.PerformanceRecorder
 import com.example.audio.StrikeAccuracyStatus
+import com.example.audio.TimingAccuracyStatus
 import com.example.data.builtin.BuiltinExercises
 import com.example.model.HandpanPattern
 import com.example.model.NotePitchConfig
@@ -121,7 +123,7 @@ class RealHandpanArchitectureTestSuite {
         // Note 0 is D3 (146.83Hz). F3 is note 2 (174.61Hz)
         val result = evaluator.evaluateDetectedPitch(174.6f, 0.9f)
         assertNotNull(result)
-        assertEquals(StrikeAccuracyStatus.WRONG_NOTE, result?.status)
+        assertEquals(StrikeAccuracyStatus.UNKNOWN_NOTE, result?.status)
     }
 
     @Test

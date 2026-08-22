@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -126,39 +127,13 @@ class PerformanceRecorder(
         val offset = ((event.monotonicTimestampNanos - recordStartNanos) / 1_000_000L).coerceAtLeast(0L)
         liveEvents.add(
             RecordedStrikeEvent(
-                            val eventOffsetNanos = (evt.timestampMs / speed * 1_000_000L).toLong()
-                            deadlineScheduler.await(recordStartNanos + eventOffsetNanos)
+                noteNumber = event.detectedNote ?: -1,
+                timestampMs = offset,
                 velocity = event.energy,
                 classification = if (event.pitchValid) StrikeClassification.CORRECT_NOTE else StrikeClassification.UNKNOWN_NOTE,
                 confidence = event.pitchConfidence
             )
         )
-        _state.update { it.copy(recordingEventsCount = liveEvents.size) }
-    }
-
-                            deadlineScheduler.await(recordStartNanos + (track.durationMs / speed * 1_000_000L).toLong())
-        noteNumber: Int,
-        isAccent: Boolean = false,
-        velocity: Float = 0.85f,
-        timestampMs: Long = clock.nowMillis(),
-        durationMs: Long? = null,
-        hand: String? = null,
-        classification: StrikeClassification = StrikeClassification.CORRECT_NOTE,
-        confidence: Float = 1.0f
-    ) {
-        if (!_state.value.isRecording) return
-        val offset = (timestampMs - recordStartMs).coerceAtLeast(0L)
-        val event = RecordedStrikeEvent(
-            noteNumber = noteNumber,
-            timestampMs = offset,
-            velocity = velocity,
-            isAccent = isAccent,
-            durationMs = durationMs,
-            hand = hand,
-            classification = classification,
-            confidence = confidence
-        )
-        liveEvents.add(event)
         _state.update { it.copy(recordingEventsCount = liveEvents.size) }
     }
 
@@ -175,6 +150,30 @@ class PerformanceRecorder(
                 timestampMs = offset,
                 velocity = velocity
             )
+        )
+        _state.update { it.copy(recordingEventsCount = liveEvents.size) }
+    }
+
+    fun recordStrike(
+        noteNumber: Int,
+        isAccent: Boolean = false,
+        velocity: Float = 0.85f,
+        timestampMs: Long = clock.nowMillis(),
+        durationMs: Long? = null,
+        hand: String? = null,
+        classification: StrikeClassification = StrikeClassification.CORRECT_NOTE,
+        confidence: Float = 1.0f
+    ) {
+        if (!_state.value.isRecording) return
+        liveEvents += RecordedStrikeEvent(
+            noteNumber = noteNumber,
+            timestampMs = (timestampMs - recordStartMs).coerceAtLeast(0L),
+            velocity = velocity,
+            isAccent = isAccent,
+            durationMs = durationMs,
+            hand = hand,
+            classification = classification,
+            confidence = confidence
         )
         _state.update { it.copy(recordingEventsCount = liveEvents.size) }
     }

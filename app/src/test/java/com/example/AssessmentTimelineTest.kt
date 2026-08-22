@@ -6,7 +6,7 @@ import com.example.model.AssessmentTimelineEvent
 import com.example.model.TimingResult
 import com.example.model.TimingStatus
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFailsWith
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class AssessmentTimelineTest {
@@ -38,7 +38,7 @@ class AssessmentTimelineTest {
         val timeline = AssessmentTimeline()
         timeline.append(event("same", AssessmentEventType.EXTRA))
 
-        assertFailsWith<IllegalArgumentException> {
+        assertThrows(IllegalArgumentException::class.java) {
             timeline.append(event("same", AssessmentEventType.EXTRA))
         }
     }

@@ -12,8 +12,11 @@ fun AcousticPracticeEvaluator.notifyExpectedTestTarget(
     events: List<NoteEvent>,
     targetTimestampNanos: Long
 ) {
-    val activeEvents = events.filterNot(NoteEvent::isRest)
-    if (activeEvents.isEmpty()) return
+    val activeEvents = events.filterNot(NoteEvent::isRest).map { it.copy(beatPosition = 0.0) }
+    if (activeEvents.isEmpty()) {
+        expireTargetsAt(targetTimestampNanos)
+        return
+    }
     val target = PatternScheduler.buildSchedule(
         events = activeEvents,
         beatsPerBar = 4,

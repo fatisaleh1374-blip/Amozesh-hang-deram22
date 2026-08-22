@@ -25,7 +25,7 @@ data class TimingResult(
 ) {
     val deviationMs: Long
         get() = deviationNanos / 1_000_000L
-)
+}
 
 enum class AssessmentEventType {
     EXPECTED,

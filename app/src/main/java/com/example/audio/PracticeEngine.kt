@@ -124,7 +124,10 @@ class PracticeEngine(
         playbackJob = null
         if (acousticEvaluator.state.value.isEnabled) {
             acousticEvaluator.stopAssessment(showSummary = true)
-                        deadlineScheduler.await(targetSliceNanos)
+        }
+        _uiState.update {
+            it.copy(
+                isPlaying = false,
                 isCountIn = false,
                 activeNoteNumber = -1,
                 activeEvents = emptyList(),

@@ -40,7 +40,7 @@ class OnsetAndPitchMatcher(
         scaleConfig: NotePitchConfig
     ): StrikeEvaluation {
         val energyRise = rms - lastRms
-        val hasEnergyOnset = (energyRise > 0.020f) || (rms > 0.050f && energyRise > 0.008f)
+        val hasEnergyOnset = (energyRise >= 0.020f) || (rms > 0.050f && energyRise > 0.008f)
 
         // Find the sample offset of maximum rising slope for acoustic timestamp precision
         var onsetOffset = 0
