@@ -1,7 +1,7 @@
 package com.example.audio
 
-import com.example.model.NotePitchConfig
 import com.example.model.DetectedStrikeEvent
+import com.example.model.NotePitchConfig
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
@@ -28,7 +28,7 @@ class AudioAnalysisSession(
         val listener = Listener(onStrike, onPitch)
         if (!listening) {
             microphoneLease = AudioResourceCoordinator.tryAcquire(sessionId)
-                ?: return Subscription {}
+                ?: return Subscription({}, isActive = false)
         }
         listeners += listener
         if (!listening) {
@@ -52,19 +52,22 @@ class AudioAnalysisSession(
                         )
                         listeners.forEach { it.onStrike(event) }
                     },
-                    onContinuousPitch = { result ->
-                        listeners.forEach { it.onPitch(result) }
-                    }
+                    onContinuousPitch = { result -> listeners.forEach { it.onPitch(result) } }
                 )
-                listening = true
-            } catch (error: RuntimeException) {
+                listening = detector.isListeningNow
+                if (!listening) {
+                    listeners -= listener
+                    microphoneLease?.close()
+                    microphoneLease = null
+                }
+            } catch (_: RuntimeException) {
                 listeners -= listener
                 listening = false
                 microphoneLease?.close()
                 microphoneLease = null
             }
         }
-        return Subscription { release(listener) }
+        return Subscription({ release(listener) }, isActive = listening)
     }
 
     @Synchronized
@@ -92,7 +95,8 @@ class AudioAnalysisSession(
     }
 
     class Subscription internal constructor(
-        private val onClose: () -> Unit
+        private val onClose: () -> Unit,
+        val isActive: Boolean = true
     ) : AutoCloseable {
         private var closed = false
 

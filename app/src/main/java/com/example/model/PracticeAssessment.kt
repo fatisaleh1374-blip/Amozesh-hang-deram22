@@ -176,5 +176,24 @@ data class PracticeScore(
     val noteAccuracyPercentage: Float,
     val timingAccuracyPercentage: Float,
     val overallAccuracyPercentage: Float,
-    val maxCombo: Int = 0
+    val maxCombo: Int = 0,
+    val score: Int = 0
+)
+
+data class PracticeResult(
+    val score: Int,
+    val accuracy: Float,
+    val timingAccuracy: Float,
+    val noteAccuracy: Float,
+    val perfectCount: Int,
+    val greatCount: Int,
+    val goodCount: Int,
+    val earlyCount: Int,
+    val lateCount: Int,
+    val missCount: Int,
+    val wrongNoteCount: Int,
+    val maxCombo: Int,
+    val totalTargets: Int,
+    val completedTargets: Int,
+    val durationMs: Long
 )

@@ -60,7 +60,7 @@ class PitchDetector(
         scaleConfig: NotePitchConfig,
         onStrikeDetected: (DetectedPitchResult, Long) -> Unit, // Monotonic timestamp in nanoseconds
         onContinuousPitch: (DetectedPitchResult) -> Unit = {}
-    ) {
+    ): Boolean {
         if (isListening) stopListening()
 
         val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
@@ -77,7 +77,9 @@ class PitchDetector(
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Log.e(TAG, "AudioRecord initialization failed")
-                return
+                audioRecord?.release()
+                audioRecord = null
+                return false
             }
 
             audioRecord?.startRecording()
@@ -135,11 +137,18 @@ class PitchDetector(
                     lastRms = rms
                 }
             }
+            return true
         } catch (e: Exception) {
             Log.e(TAG, "Error starting pitch detection", e)
             isListening = false
+            audioRecord?.release()
+            audioRecord = null
+            return false
         }
     }
+
+    val isListeningNow: Boolean
+        get() = isListening
 
     fun stopListening() {
         isListening = false

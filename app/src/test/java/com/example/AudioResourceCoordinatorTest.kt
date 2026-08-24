@@ -3,9 +3,28 @@ package com.example
 import com.example.audio.AudioResourceCoordinator
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertEquals
 import org.junit.Test
+import com.example.audio.AudioAnalysisSession
+import com.example.model.NotePitchConfig
 
 class AudioResourceCoordinatorTest {
+    @Test
+    fun inactiveSubscriptionDoesNotClaimUnavailableMicrophone() {
+        val blocker = AudioResourceCoordinator.tryAcquire("other-owner")
+        val session = AudioAnalysisSession()
+
+        val subscription = session.acquire(
+            scaleConfig = NotePitchConfig.D_KURD_9,
+            onStrike = {}
+        )
+
+        assertEquals(false, subscription.isActive)
+        subscription.close()
+        session.close()
+        blocker?.close()
+    }
+
     @Test
     fun ownershipIsExclusiveAndReleaseIsIdempotent() {
         val first = AudioResourceCoordinator.tryAcquire("analysis")

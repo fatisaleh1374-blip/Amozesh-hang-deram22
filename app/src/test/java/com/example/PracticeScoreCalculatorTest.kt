@@ -8,6 +8,7 @@ import com.example.model.AssessmentTimelineEvent
 import com.example.model.TimingResult
 import com.example.model.TimingStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PracticeScoreCalculatorTest {
@@ -71,6 +72,26 @@ class PracticeScoreCalculatorTest {
 
         assertEquals(50f, score.noteAccuracyPercentage, 0.001f)
         assertEquals(100f, score.timingAccuracyPercentage, 0.001f)
+    }
+
+    @Test
+    fun resultPreservesScoreComboAndTargetStatistics() {
+        val events = listOf(
+            event("expected-1", AssessmentEventType.EXPECTED),
+            event("perfect-1", AssessmentEventType.CORRECT, TimingStatus.PERFECT),
+            event("perfect-2", AssessmentEventType.CORRECT, TimingStatus.PERFECT),
+            event("miss-1", AssessmentEventType.MISSED),
+            event("perfect-3", AssessmentEventType.CORRECT, TimingStatus.PERFECT)
+        )
+
+        val result = PracticeScoreCalculator.calculateResult(events, durationMs = 1_250L)
+
+        assertEquals(1, result.completedTargets)
+        assertEquals(1, result.totalTargets)
+        assertEquals(2, result.maxCombo)
+        assertEquals(1, result.missCount)
+        assertEquals(1_250L, result.durationMs)
+        assertTrue(result.score > 0)
     }
 
     private fun event(

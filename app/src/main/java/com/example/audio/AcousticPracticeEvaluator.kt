@@ -35,6 +35,16 @@ enum class StrikeAccuracyStatus {
     MISSED      // no strike detected within window
 }
 
+enum class MicrophoneState {
+    MIC_IDLE,
+    MIC_REQUESTING_PERMISSION,
+    MIC_READY,
+    MIC_UNAVAILABLE,
+    MIC_ERROR,
+    MIC_ACTIVE,
+    MIC_PAUSED
+}
+
 enum class TimingAccuracyStatus {
     PERFECT,
     GOOD,
@@ -116,10 +126,12 @@ data class AcousticAssessmentState(
     val accuracyPercentage: Float = 0f, // Combined overall
     val averageTimingDeviationMs: Float = 0f,
     val consistencyPercentage: Float = 100f,
-    val isSummaryDialogVisible: Boolean = false
+    val isSummaryDialogVisible: Boolean = false,
+    val microphoneState: MicrophoneState = MicrophoneState.MIC_IDLE,
+    val assessmentActive: Boolean = false
 ) {
     val isActive: Boolean
-        get() = isEnabled && isListening
+        get() = isEnabled && assessmentActive
 
     val totalHits: Int
         get() = perfectCount + goodCount + earlyCount + lateCount + wrongNoteCount
@@ -192,7 +204,9 @@ class AcousticPracticeEvaluator(
             it.copy(
                 isEnabled = true,
                 isListening = false,
-                isSummaryDialogVisible = false
+                    isSummaryDialogVisible = false,
+                microphoneState = MicrophoneState.MIC_READY,
+                assessmentActive = true
             )
         }
 
@@ -207,7 +221,7 @@ class AcousticPracticeEvaluator(
         if (!_state.value.isEnabled) return
         analysisSubscription?.close()
         analysisSubscription = null
-        _state.update { it.copy(isListening = false) }
+        _state.update { it.copy(isListening = false, microphoneState = MicrophoneState.MIC_PAUSED) }
     }
 
     fun resumeAssessment() {
@@ -233,7 +247,13 @@ class AcousticPracticeEvaluator(
                 handleStrikeDetected(event)
             }
         )
-        _state.update { it.copy(isListening = true) }
+        val active = analysisSubscription?.isActive == true
+        _state.update {
+            it.copy(
+                isListening = active,
+                microphoneState = if (active) MicrophoneState.MIC_ACTIVE else MicrophoneState.MIC_UNAVAILABLE
+            )
+        }
     }
 
     /**
@@ -275,12 +295,13 @@ class AcousticPracticeEvaluator(
         finalizePendingEvents()
         analysisSubscription?.close()
         analysisSubscription = null
-        if (ownsAnalysisSession) analysisSession.close()
         _state.update {
             it.copy(
                 isEnabled = false,
                 isListening = false,
-                isSummaryDialogVisible = showSummary && it.totalStrikesEvaluated > 0
+                isSummaryDialogVisible = showSummary && it.totalStrikesEvaluated > 0,
+                microphoneState = MicrophoneState.MIC_IDLE,
+                assessmentActive = false
             )
         }
     }
@@ -297,7 +318,7 @@ class AcousticPracticeEvaluator(
         if (!willEnable) {
             analysisSubscription?.close()
             analysisSubscription = null
-            _state.update { it.copy(isListening = false) }
+            _state.update { it.copy(isListening = false, microphoneState = MicrophoneState.MIC_IDLE) }
         }
     }
 
@@ -306,7 +327,7 @@ class AcousticPracticeEvaluator(
     }
 
     internal fun expireTargetsAt(nowNanos: Long) {
-        if (_state.value.isEnabled && _state.value.isListening) expirePendingEvents(nowNanos)
+        if (_state.value.isEnabled) expirePendingEvents(nowNanos)
     }
 
     fun resetStats() {
@@ -344,7 +365,7 @@ class AcousticPracticeEvaluator(
      */
     @Synchronized
     fun notifyExpectedTarget(target: MusicalTarget) {
-        if (!_state.value.isEnabled || !_state.value.isListening) return
+        if (!_state.value.isEnabled) return
         if (assessmentSessionId != target.identity.sessionId) {
             assessmentSessionId = target.identity.sessionId
         }
@@ -381,7 +402,7 @@ class AcousticPracticeEvaluator(
 
     @Synchronized
     private fun handleStrikeDetected(event: DetectedStrikeEvent) {
-        if (!_state.value.isEnabled || !_state.value.isListening || !practiceRunning) return
+        if (!_state.value.isEnabled || !practiceRunning) return
 
         if (!targetRegistry.markProcessed(event.id)) return
 

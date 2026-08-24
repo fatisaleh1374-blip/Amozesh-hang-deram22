@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.audio.StrikeAccuracyStatus
+import com.example.audio.MicrophoneState
 import com.example.model.HandpanPattern
 import com.example.model.PracticeInputMode
 import com.example.model.PracticeMode
@@ -263,7 +264,7 @@ fun PracticeScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // Count-in Overlay if Active
-            AnimatedVisibility(visible = practiceState.phase == com.example.audio.PracticePhase.PREVIEW || practiceState.isCountIn) {
+            AnimatedVisibility(visible = practiceState.phase == com.example.audio.PracticePhase.PREVIEW || practiceState.isCountIn || practiceState.phase == com.example.audio.PracticePhase.PAUSED) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -275,11 +276,13 @@ fun PracticeScreen(
                 ) {
                     Text(
                         text = if (practiceState.phase == com.example.audio.PracticePhase.PREVIEW) {
-                            "پیش‌نمایش: ضرب ${practiceState.previewBeat} از ${practiceState.previewBeatCount}"
+                            "گوش کن: ضرب ${practiceState.previewBeat} از ${practiceState.previewBeatCount}"
+                        } else if (practiceState.phase == com.example.audio.PracticePhase.PAUSED) {
+                            "مکث"
                         } else {
-                            "آماده‌باش: ضرب ${practiceState.countInBeat}..."
+                            "آماده شو: ${practiceState.countInBeat}"
                         },
-                        fontSize = 18.sp,
+                        fontSize = if (practiceState.isCountIn || practiceState.phase == com.example.audio.PracticePhase.PREVIEW) 26.sp else 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = HandpanGoldLight
                     )
@@ -369,6 +372,27 @@ fun PracticeScreen(
 
                     // Live Feedback HUD Bar when in REAL_HANDPAN mode
                     if (practiceState.inputMode == PracticeInputMode.REAL_HANDPAN) {
+                        if (acousticState.microphoneState == MicrophoneState.MIC_UNAVAILABLE ||
+                            acousticState.microphoneState == MicrophoneState.MIC_ERROR
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "میکروفون در دسترس نیست\nاجازه دسترسی به میکروفون را فعال کن",
+                                    color = Color(0xFFFF8A80),
+                                    fontSize = 12.sp
+                                )
+                                Button(
+                                    onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                                    contentPadding = ButtonDefaults.TextButtonContentPadding
+                                ) {
+                                    Text("تلاش دوباره")
+                                }
+                            }
+                        }
                         Spacer(modifier = Modifier.height(10.dp))
                         Row(
                             modifier = Modifier
