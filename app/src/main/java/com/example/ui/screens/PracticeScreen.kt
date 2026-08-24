@@ -262,7 +262,7 @@ fun PracticeScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // Count-in Overlay if Active
-            AnimatedVisibility(visible = practiceState.isCountIn) {
+            AnimatedVisibility(visible = practiceState.phase == com.example.audio.PracticePhase.PREVIEW || practiceState.isCountIn) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -273,7 +273,11 @@ fun PracticeScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "آماده‌باش: ضرب ${practiceState.countInBeat}...",
+                        text = if (practiceState.phase == com.example.audio.PracticePhase.PREVIEW) {
+                            "پیش‌نمایش: ضرب ${practiceState.previewBeat} از ${practiceState.previewBeatCount}"
+                        } else {
+                            "آماده‌باش: ضرب ${practiceState.countInBeat}..."
+                        },
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = HandpanGoldLight

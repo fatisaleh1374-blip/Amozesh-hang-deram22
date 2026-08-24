@@ -188,11 +188,27 @@ class AcousticPracticeEvaluator(
         _state.update {
             it.copy(
                 isEnabled = true,
-                isListening = true,
+                isListening = false,
                 isSummaryDialogVisible = false
             )
         }
 
+        attachAnalysisSubscription()
+    }
+
+    fun pauseAssessment() {
+        if (!_state.value.isEnabled) return
+        analysisSubscription?.close()
+        analysisSubscription = null
+        _state.update { it.copy(isListening = false) }
+    }
+
+    fun resumeAssessment() {
+        if (!_state.value.isEnabled || _state.value.isListening) return
+        attachAnalysisSubscription()
+    }
+
+    private fun attachAnalysisSubscription() {
         analysisSubscription?.close()
         analysisSubscription = analysisSession.acquire(
             scaleConfig = scaleConfig,
@@ -210,6 +226,7 @@ class AcousticPracticeEvaluator(
                 handleStrikeDetected(event)
             }
         )
+        _state.update { it.copy(isListening = true) }
     }
 
     /**

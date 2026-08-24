@@ -4,6 +4,7 @@ import com.example.audio.AcousticPracticeEvaluator
 import com.example.audio.AudioEngine
 import com.example.audio.PracticeClock
 import com.example.audio.PracticeEngine
+import com.example.audio.PracticePhase
 import com.example.audio.PerformanceRecorder
 import com.example.audio.StrikeAccuracyStatus
 import com.example.audio.TimingAccuracyStatus
@@ -200,6 +201,117 @@ class RealHandpanArchitectureTestSuite {
         practiceEngine.setInputMode(PracticeInputMode.REAL_HANDPAN)
         practiceEngine.loadPattern(BuiltinExercises.ALL_BUILTIN_PATTERNS[1])
         assertEquals(PracticeInputMode.REAL_HANDPAN, practiceEngine.uiState.value.inputMode)
+    }
+
+    @Test
+    fun test10b_practicePhaseIsExplicitAfterLoadAndStop() {
+        assertEquals(PracticePhase.IDLE, practiceEngine.uiState.value.phase)
+
+        practiceEngine.loadPattern(testPattern)
+        assertEquals(PracticePhase.READY, practiceEngine.uiState.value.phase)
+
+        practiceEngine.stop()
+        assertEquals(PracticePhase.READY, practiceEngine.uiState.value.phase)
+    }
+
+    @Test
+    fun test10c_timelinePositionIsDeterministic() {
+        val timeline = com.example.audio.PracticeTimeline(testPattern, bpm = 60)
+        val position = timeline.positionAt(1_000_000_000L, countdownBeats = 3)
+        val expectedCurrentIndex = testPattern.events.indexOfLast {
+            !it.isRest && it.beatPosition <= 1.0 + com.example.audio.PatternScheduler.BEAT_EPSILON
+        }
+        val expectedNext = testPattern.events.drop(expectedCurrentIndex + 1).firstOrNull { !it.isRest }
+
+        assertEquals(1.0, position.currentBeat, 0.0001)
+        assertEquals(expectedCurrentIndex, position.currentNoteIndex)
+        assertEquals(testPattern.events.getOrNull(expectedCurrentIndex), position.currentNote)
+        assertEquals(expectedNext, position.nextNote)
+        assertEquals(60, position.bpm)
+        assertEquals(1_000L, position.elapsedMs)
+        assertEquals(2, position.beatNumber)
+        assertEquals(1, position.barNumber)
+        assertEquals(2, position.countdownRemaining)
+    }
+
+    @Test
+    fun test10d_hitValidationSeparatesDetectionFromScoring() {
+        val hit = com.example.audio.PracticeHitValidator.validate(
+            candidate = com.example.audio.HitCandidate(
+                timestampNanos = 1_035_000_000L,
+                detectedNote = 5,
+                confidence = 0.9f,
+                source = "microphone"
+            ),
+            expectedTimestampNanos = 1_000_000_000L,
+            expectedNote = 5
+        )
+
+        assertEquals(35L, hit.timingErrorMs)
+        assertTrue(hit.pitchCorrect)
+        assertTrue(hit.timingCorrect)
+        assertEquals(100, hit.scoreContribution)
+        assertFalse(hit.isMiss)
+    }
+
+    @Test
+    fun test10e_timelineUsesBpm120WithoutDrift() {
+        val timeline = com.example.audio.PracticeTimeline(testPattern, bpm = 120)
+        val position = timeline.positionAt(500_000_000L)
+
+        assertEquals(1.0, position.currentBeat, 0.0001)
+        assertEquals(500L, position.elapsedMs)
+        assertEquals(120, position.bpm)
+    }
+
+    @Test
+    fun test10f_pauseKeepsEvaluatorSessionButStopsListening() {
+        evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        evaluator.pauseAssessment()
+
+        assertTrue(evaluator.state.value.isEnabled)
+        assertFalse(evaluator.state.value.isListening)
+
+        evaluator.stopAssessment(showSummary = false)
+    }
+
+    @Test
+    fun test10g_timelineProjectionProvidesSharedBeatAndNoteCursor() {
+        val timeline = com.example.audio.PracticeTimeline(testPattern, bpm = 120)
+        val cursor = timeline.positionAtBeat(1.0)
+
+        assertEquals(500L, cursor.elapsedMs)
+        assertEquals(2, cursor.beatNumber)
+        assertEquals(1, cursor.barNumber)
+        assertEquals(cursor.currentNote?.let { testPattern.events.indexOf(it) }, cursor.currentNoteIndex)
+        assertEquals(cursor.nextNote, testPattern.events.drop(cursor.currentNoteIndex + 1).firstOrNull { !it.isRest })
+        assertTrue(cursor.isOnBeatWindow)
+    }
+
+    @Test
+    fun test10h_previewDoesNotOutliveShortPattern() {
+        val shortPattern = HandpanPattern(
+            id = "short-preview",
+            title = "short",
+            description = "short",
+            bpm = 120,
+            bars = 1,
+            events = listOf(NoteEvent(noteNumber = 5, beatPosition = 0.0, duration = 0.5))
+        )
+
+        assertEquals(1, com.example.audio.PracticePreparation.previewBeatCount(shortPattern))
+        assertTrue(
+            com.example.audio.PracticePreparation.previewBeats(shortPattern) <= shortPattern.totalBeats
+        )
+    }
+
+    @Test
+    fun test10i_previewCanBeDisabledWithoutChangingPatternTiming() {
+        practiceEngine.loadPattern(testPattern)
+        practiceEngine.setPreviewEnabled(false)
+
+        assertFalse(practiceEngine.uiState.value.previewEnabled)
+        assertEquals(testPattern.bpm, practiceEngine.uiState.value.bpm)
     }
 
     // 11. Toggle acoustic assessment in PracticeEngine
