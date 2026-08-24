@@ -55,6 +55,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.model.DifficultyLevel
 import com.example.model.HandpanPattern
 import com.example.model.PatternCategory
@@ -83,6 +85,10 @@ fun ExerciseLibraryScreen(
     val allPatterns by viewModel.allPatterns.collectAsStateWithLifecycle()
     val appState by viewModel.appUiState.collectAsStateWithLifecycle()
     val practiceStats by viewModel.practiceStats.collectAsStateWithLifecycle()
+    val transcriptionState by viewModel.transcriptionState.collectAsStateWithLifecycle()
+    val audioPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let(viewModel::transcribeAudio) }
 
     var selectedCategoryFilter by remember { mutableStateOf<PatternCategory?>(appState.selectedCategory) }
     var searchQuery by remember { mutableStateOf("") }
@@ -158,6 +164,12 @@ fun ExerciseLibraryScreen(
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
+                        onClick = { audioPicker.launch(arrayOf("audio/*")) },
+                        modifier = Modifier.testTag("library_transcribe_audio_button")
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = "تحلیل فایل صوتی", tint = HandpanGoldLight)
+                    }
+                    IconButton(
                         onClick = { showImportDialog = true },
                         modifier = Modifier.testTag("library_import_pattern_button")
                     ) {
@@ -169,6 +181,42 @@ fun ExerciseLibraryScreen(
                         modifier = Modifier.testTag("library_add_pattern_button")
                     ) {
                         Icon(Icons.Default.Add, contentDescription = "ساخت الگو", tint = HandpanGold)
+                    }
+                }
+            }
+
+            if (transcriptionState.isAnalyzing || transcriptionState.result != null || transcriptionState.errorMessage != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("transcription_preview"),
+                    colors = CardDefaults.cardColors(containerColor = CharcoalSurface),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                        when {
+                            transcriptionState.isAnalyzing -> Text("در حال تحلیل آفلاین فایل صوتی...", color = HandpanGoldLight)
+                            transcriptionState.errorMessage != null -> {
+                                Text(transcriptionState.errorMessage!!, color = Color(0xFFFF8A80))
+                                Button(onClick = { viewModel.clearTranscription() }) { Text("بستن") }
+                            }
+                            else -> {
+                                val result = transcriptionState.result!!
+                                Text("پیش‌نمایش transcription", color = Color.White, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "BPM: ${result.tempo.bpm ?: "نامشخص"}  •  ضربه‌ها: ${result.onsets.size}  •  مدت: ${result.quality.durationMs}ms",
+                                    color = HandpanGoldLight,
+                                    fontSize = 12.sp
+                                )
+                                Text(
+                                    "اطمینان: ${(result.confidence.value * 100).toInt()}%${if (result.warnings.isNotEmpty()) "  •  هشدار دارد" else ""}",
+                                    color = if (result.warnings.isEmpty()) Color.LightGray else Color(0xFFFFC107),
+                                    fontSize = 12.sp
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { viewModel.acceptTranscription() }) { Text("ورود به تمرین") }
+                                    Button(onClick = { viewModel.clearTranscription() }) { Text("بستن") }
+                                }
+                            }
+                        }
                     }
                 }
             }

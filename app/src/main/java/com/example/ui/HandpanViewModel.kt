@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.AmbienceEngine
@@ -72,6 +73,12 @@ data class AppUiState(
     val showLessonStudioDialog: Boolean = false
 )
 
+data class TranscriptionUiState(
+    val isAnalyzing: Boolean = false,
+    val result: com.example.audio.TranscriptionResult? = null,
+    val errorMessage: String? = null
+)
+
 class HandpanViewModel(application: Application) : AndroidViewModel(application) {
 
     private val context: Context = application.applicationContext
@@ -128,6 +135,9 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
 
     private val _appUiState = MutableStateFlow(AppUiState())
     val appUiState: StateFlow<AppUiState> = _appUiState.asStateFlow()
+    private val _transcriptionState = MutableStateFlow(TranscriptionUiState())
+    val transcriptionState: StateFlow<TranscriptionUiState> = _transcriptionState.asStateFlow()
+    private var transcriptionJob: kotlinx.coroutines.Job? = null
 
     val allPatterns: StateFlow<List<HandpanPattern>> = repository.allPatterns
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -363,6 +373,35 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
         _appUiState.update { it.copy(currentPattern = pattern, currentScreen = AppScreen.PRACTICE) }
         practiceEngine.setInputMode(inputMode)
         practiceEngine.loadPattern(pattern)
+    }
+
+    fun transcribeAudio(uri: Uri) {
+        transcriptionJob?.cancel()
+        transcriptionJob = viewModelScope.launch {
+            _transcriptionState.value = TranscriptionUiState(isAnalyzing = true)
+            when (val decoded = com.example.audio.AndroidAudioDecoder().decode(context, uri)) {
+                is com.example.audio.AudioDecodeResult.Success -> {
+                    val result = com.example.audio.OfflineHandpanTranscriber(
+                        pitchConfig = _appUiState.value.currentScaleConfig
+                    ).transcribe(decoded.audio)
+                    _transcriptionState.value = TranscriptionUiState(result = result)
+                }
+                is com.example.audio.AudioDecodeResult.Failure -> {
+                    _transcriptionState.value = TranscriptionUiState(
+                        errorMessage = "فایل صوتی قابل تحلیل نیست: ${decoded.code}"
+                    )
+                }
+            }
+        }
+    }
+
+    fun acceptTranscription() {
+        transcriptionState.value.result?.pattern?.pattern?.let { startPractice(it) }
+    }
+
+    fun clearTranscription() {
+        transcriptionJob?.cancel()
+        _transcriptionState.value = TranscriptionUiState()
     }
 
     fun playNoteDirect(noteNumber: Int, accent: Boolean = false) {
