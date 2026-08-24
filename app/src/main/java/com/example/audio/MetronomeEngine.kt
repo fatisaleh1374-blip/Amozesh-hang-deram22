@@ -35,6 +35,15 @@ data class MetronomeState(
     val nextTickTimestampNanos: Long = 0L
 )
 
+data class PracticeBeatEvent(
+    val beatNumber: Int,
+    val barNumber: Int,
+    val beatStartNanos: Long,
+    val beatProgress: Float,
+    val isDownbeat: Boolean,
+    val bpm: Int
+)
+
 class MetronomeEngine(
     private val audioEngine: AudioEngine,
     private val hapticHelper: HapticHelper? = null,
@@ -74,6 +83,26 @@ class MetronomeEngine(
     fun release() {
         stop()
         engineScope.cancel()
+    }
+
+    fun consumePracticeBeat(event: PracticeBeatEvent) {
+        val beatDuration = MusicalTiming.beatDurationNanos(event.bpm)
+        _state.update {
+            it.copy(
+                isPlaying = true,
+                bpm = event.bpm,
+                currentBeat = event.beatNumber,
+                currentSubBeat = 1,
+                isDownbeat = event.isDownbeat,
+                barIndex = event.barNumber,
+                tickIndex = event.beatNumber.toLong() - 1L,
+                lastTickTimestampNanos = event.beatStartNanos,
+                nextTickTimestampNanos = event.beatStartNanos + beatDuration
+            )
+        }
+        if (event.beatProgress <= PatternScheduler.BEAT_EPSILON) {
+            audioEngine.playMetronomeClick(isAccent = event.isDownbeat)
+        }
     }
 
     private suspend fun runMetronomeLoop() {

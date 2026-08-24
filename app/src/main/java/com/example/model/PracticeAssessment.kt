@@ -175,5 +175,6 @@ data class PracticeScore(
     val extraCount: Int,
     val noteAccuracyPercentage: Float,
     val timingAccuracyPercentage: Float,
-    val overallAccuracyPercentage: Float
+    val overallAccuracyPercentage: Float,
+    val maxCombo: Int = 0
 )

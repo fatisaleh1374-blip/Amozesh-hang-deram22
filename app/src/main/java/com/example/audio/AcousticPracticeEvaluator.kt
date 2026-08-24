@@ -157,6 +157,8 @@ class AcousticPracticeEvaluator(
     private var timingPolicy = TimingPolicy()
     private var analysisSubscription: AudioAnalysisSession.Subscription? = null
     private var assessmentSessionId: String = ""
+    @Volatile
+    private var practiceRunning: Boolean = false
     private val targetMatcher = MusicalTargetMatcher()
     private val targetRegistry = TargetRegistry()
 
@@ -183,6 +185,7 @@ class AcousticPracticeEvaluator(
         timeline.clear()
         beatDurationNanos = MusicalTiming.beatDurationNanos(bpm)
         resetStats()
+        practiceRunning = true
 
         assessmentStartTimestampNanos = clock.nowNanos()
         _state.update {
@@ -194,6 +197,10 @@ class AcousticPracticeEvaluator(
         }
 
         attachAnalysisSubscription()
+    }
+
+    fun setPracticeRunning(running: Boolean) {
+        practiceRunning = running
     }
 
     fun pauseAssessment() {
@@ -374,7 +381,7 @@ class AcousticPracticeEvaluator(
 
     @Synchronized
     private fun handleStrikeDetected(event: DetectedStrikeEvent) {
-        if (!_state.value.isEnabled || !_state.value.isListening) return
+        if (!_state.value.isEnabled || !_state.value.isListening || !practiceRunning) return
 
         if (!targetRegistry.markProcessed(event.id)) return
 

@@ -110,6 +110,7 @@ fun PracticeScreen(
     val practiceState by viewModel.practiceEngine.uiState.collectAsStateWithLifecycle()
     val acousticState by viewModel.practiceEngine.acousticEvaluator.state.collectAsStateWithLifecycle()
     val pattern = practiceState.pattern
+    val targetState = practiceState.targetState
 
     var showExportDialog by remember { mutableStateOf(false) }
 
@@ -437,25 +438,25 @@ fun PracticeScreen(
 
             // 1. Prominent Active Note Display (Large Center Highlight)
             GiantNoteDisplay(
-                activeNoteNumber = practiceState.activeNoteNumber,
-                isRest = practiceState.activeNoteEvent?.isRest == true,
-                isAccent = practiceState.activeNoteEvent?.accent == true,
-                hand = practiceState.activeNoteEvent?.hand,
+                activeNoteNumber = targetState?.currentNote?.noteNumber ?: -1,
+                isRest = targetState?.currentNote?.isRest == true,
+                isAccent = targetState?.currentNote?.accent == true,
+                hand = targetState?.currentNote?.hand,
                 mode = practiceState.mode
             )
 
             // 2. Note Timeline & Beat Indicators (e.g. 1 3 5 3 / ● ● ● ●)
             NoteTimelineView(
                 pattern = pattern,
-                currentNoteIndex = practiceState.currentNoteIndex,
-                currentBeatInBar = practiceState.currentBeatInBar,
-                currentBar = practiceState.currentBar,
+                currentNoteIndex = targetState?.currentNoteIndex ?: -1,
+                currentBeatInBar = targetState?.currentBeatInBar ?: 1.0,
+                currentBar = targetState?.barNumber ?: 1,
                 mode = practiceState.mode
             )
 
             // 3. Interactive Handpan Disc View
             HandpanDiscView(
-                activeNoteNumber = practiceState.activeNoteNumber,
+                activeNoteNumber = targetState?.currentNote?.noteNumber ?: -1,
                 onNoteTapped = { noteNum ->
                     viewModel.playNoteDirect(noteNum)
                 },

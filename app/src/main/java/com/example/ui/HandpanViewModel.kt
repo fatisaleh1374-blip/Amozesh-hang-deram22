@@ -12,6 +12,7 @@ import com.example.audio.AudioEngine
 import com.example.audio.CustomSampleRecorder
 import com.example.audio.MetronomeEngine
 import com.example.audio.PerformanceRecorder
+import com.example.audio.PracticeClock
 import com.example.audio.PracticeEngine
 import com.example.data.local.AppDatabase
 import com.example.data.repository.HandpanRepository
@@ -84,18 +85,36 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
 
     val hapticHelper = HapticHelper(context)
     val audioEngine = AudioEngine(context)
-    val metronomeEngine = MetronomeEngine(audioEngine, hapticHelper)
+    private val practiceClock: PracticeClock = PracticeClock.Default
+    val metronomeEngine = MetronomeEngine(audioEngine, hapticHelper, practiceClock)
     private val audioAnalysisSession = AudioAnalysisSession()
     private val assessmentTimeline = AssessmentTimeline()
     val practiceEngine = PracticeEngine(
         audioEngine = audioEngine,
         hapticHelper = hapticHelper,
+        clock = practiceClock,
         acousticEvaluator = AcousticPracticeEvaluator(
+            clock = practiceClock,
             analysisSession = audioAnalysisSession,
             ownsAnalysisSession = false,
             timeline = assessmentTimeline
         )
     )
+
+    init {
+        practiceEngine.onTimelineBeat = { position, _, beatStartNanos ->
+            metronomeEngine.consumePracticeBeat(
+                com.example.audio.PracticeBeatEvent(
+                    beatNumber = position.beatNumber,
+                    barNumber = position.barNumber,
+                    beatStartNanos = beatStartNanos,
+                    beatProgress = position.beatProgress,
+                    isDownbeat = position.isDownbeat,
+                    bpm = position.bpm
+                )
+            )
+        }
+    }
     val ambienceEngine = AmbienceEngine()
     val performanceRecorder = PerformanceRecorder(
         context = context,

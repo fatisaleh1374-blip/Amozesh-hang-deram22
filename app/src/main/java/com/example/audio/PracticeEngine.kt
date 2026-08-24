@@ -21,6 +21,7 @@ data class PracticeUiState(
     val pattern: HandpanPattern? = null,
     val phase: PracticePhase = PracticePhase.IDLE,
     val timelinePosition: PracticeTimelinePosition? = null,
+    val targetState: PracticeTargetState? = null,
     val previewEnabled: Boolean = true,
     val previewBeat: Int = 0,
     val previewBeatCount: Int = 0,
@@ -75,17 +76,24 @@ class PracticeEngine(
     private var resumeFromBeat: Double? = null
     private var resumePhase: PracticePhase? = null
     private var practiceTimeline: PracticeTimeline? = null
+    private var timelineStartNanos: Long? = null
     private val deadlineScheduler = DeadlineScheduler(clock)
 
     var onRoundCompleted: ((HandpanPattern, Int, Int) -> Unit)? = null
+    var onTimelineBeat: ((PracticeTimelinePosition, List<NoteEvent>, Long) -> Unit)? = null
 
     fun loadPattern(pattern: HandpanPattern) {
         stop()
+        practiceTimeline = PracticeTimeline(pattern, pattern.bpm)
+        timelineStartNanos = null
         _uiState.update {
             it.copy(
                 pattern = pattern,
                 phase = PracticePhase.READY,
-                timelinePosition = PracticeTimeline(pattern, pattern.bpm).positionAtBeat(0.0),
+                timelinePosition = practiceTimeline?.positionAtBeat(0.0),
+                targetState = practiceTimeline?.positionAtBeat(0.0)?.let {
+                    PracticeTargetState.from(it, PracticePhase.READY)
+                },
                 previewBeat = 0,
                 previewBeatCount = PracticePreparation.previewBeatCount(pattern),
                 bpm = pattern.bpm,
@@ -134,8 +142,6 @@ class PracticeEngine(
 
         if (isResuming) {
             acousticEvaluator.resumeAssessment()
-        } else if (!_uiState.value.countInEnabled) {
-            startAcousticAssessment(pattern)
         }
 
         playbackJob = engineScope.launch {
@@ -156,6 +162,7 @@ class PracticeEngine(
         playbackJob?.cancel()
         playbackJob = null
         acousticEvaluator.pauseAssessment()
+        acousticEvaluator.setPracticeRunning(false)
         _uiState.update {
             it.copy(
                 isPlaying = false,
@@ -171,8 +178,10 @@ class PracticeEngine(
     fun stop() {
         pause()
         acousticEvaluator.stopAssessment(showSummary = false)
+        acousticEvaluator.setPracticeRunning(false)
         resumeFromBeat = null
         resumePhase = null
+        timelineStartNanos = null
         _uiState.update {
             it.copy(
                 phase = if (it.pattern == null) PracticePhase.IDLE else PracticePhase.READY,
@@ -194,6 +203,21 @@ class PracticeEngine(
                     patternProgress = 0f,
                     countdownRemaining = 0
                 ),
+                targetState = it.timelinePosition?.copy(
+                    elapsedNanos = 0L,
+                    elapsedMs = 0L,
+                    currentBeat = 0.0,
+                    currentBeatInBar = 1.0,
+                    beatNumber = 1,
+                    barNumber = 1,
+                    currentNoteIndex = -1,
+                    currentNote = null,
+                    nextNote = it.pattern?.activeNotes?.firstOrNull(),
+                    beatProgress = 0f,
+                    barProgress = 0f,
+                    patternProgress = 0f,
+                    countdownRemaining = 0
+                )?.let { position -> PracticeTargetState.from(position, PracticePhase.READY) },
                 activeEvents = emptyList(),
                 activeNoteEvent = null,
                 activeNoteNumber = -1
@@ -214,7 +238,9 @@ class PracticeEngine(
 
     private suspend fun runPracticeLoop(pattern: HandpanPattern, startBeat: Double? = null) {
         val beatsPerBar = pattern.timeSignature.beatsPerBar
-        practiceTimeline = PracticeTimeline(pattern, _uiState.value.effectiveBpm)
+        if (practiceTimeline == null || practiceTimeline?.bpm != _uiState.value.effectiveBpm) {
+            practiceTimeline = PracticeTimeline(pattern, _uiState.value.effectiveBpm)
+        }
 
         if ((startBeat == null || resumePhase == PracticePhase.PREVIEW) && _uiState.value.previewEnabled) {
             runPreview(pattern, beatsPerBar, if (resumePhase == PracticePhase.PREVIEW) startBeat else null)
@@ -222,7 +248,7 @@ class PracticeEngine(
         }
 
         // 1. Count-in with unified monotonic PracticeClock
-        if (_uiState.value.countInEnabled) {
+        if (_uiState.value.countInEnabled && startBeat == null) {
             _uiState.update { it.copy(phase = PracticePhase.COUNTDOWN, isCountIn = true, countInBeat = 1) }
 
             val countInStartNanos = clock.nowNanos()
@@ -231,6 +257,18 @@ class PracticeEngine(
 
             for (c in 1..beatsPerBar) {
                 _uiState.update { it.copy(countInBeat = c) }
+                val countdownPosition = practiceTimeline?.positionAtBeat(
+                    beat = 0.0,
+                    countdownRemaining = beatsPerBar - c + 1
+                )
+                _uiState.update {
+                    it.copy(
+                        timelinePosition = countdownPosition,
+                        targetState = countdownPosition?.let { position ->
+                            PracticeTargetState.from(position, PracticePhase.COUNTDOWN)
+                        }
+                    )
+                }
                 val isFirst = (c == 1)
 
                 audioEngine.playMetronomeClick(isAccent = isFirst)
@@ -241,7 +279,24 @@ class PracticeEngine(
             }
 
             _uiState.update { it.copy(phase = PracticePhase.RUNNING, isCountIn = false) }
+            timelineStartNanos = clock.nowNanos()
             startAcousticAssessment(pattern)
+            acousticEvaluator.setPracticeRunning(true)
+        } else if (startBeat == null) {
+            _uiState.update { it.copy(phase = PracticePhase.RUNNING, isCountIn = false) }
+            timelineStartNanos = clock.nowNanos()
+            startAcousticAssessment(pattern)
+            acousticEvaluator.setPracticeRunning(true)
+        } else {
+            _uiState.update { it.copy(phase = PracticePhase.RUNNING, isCountIn = false) }
+            acousticEvaluator.setPracticeRunning(true)
+        }
+
+        if (timelineStartNanos == null) {
+            val resumeOffset = startBeat?.let {
+                MusicalTiming.beatToNanos(it, _uiState.value.effectiveBpm, pattern.timeSignature)
+            } ?: 0L
+            timelineStartNanos = clock.nowNanos() - resumeOffset
         }
 
         // 2. Main Practice Execution using pre-indexed slices
@@ -253,7 +308,14 @@ class PracticeEngine(
             val currentBpm = currentState.effectiveBpm
             val startBar = if (currentState.isLoopEnabled) currentState.loopStartBar else 1
             val endBar = if (currentState.isLoopEnabled) currentState.loopEndBar else pattern.bars
-            val loopStartNanos = clock.nowNanos()
+            val loopStartBeat = ((startBar - 1) * beatsPerBar).toDouble()
+            val loopDurationNanos = MusicalTiming.beatToNanos(
+                ((endBar - startBar) * beatsPerBar).toDouble(),
+                currentBpm,
+                pattern.timeSignature
+            )
+            val loopStartNanos = (timelineStartNanos ?: clock.nowNanos()) +
+                (currentLoopIteration * loopDurationNanos)
 
             // Build lookahead pre-indexed schedule slices for the current bar loop range
             val schedule = PatternScheduler.buildSchedule(
@@ -279,7 +341,6 @@ class PracticeEngine(
                 continue
             }
 
-            val loopStartBeat = ((startBar - 1) * beatsPerBar).toDouble()
             for (slice in schedule) {
                 val sliceOffsetBeats = slice.beatPosition - loopStartBeat
                 val targetSliceNanos = loopStartNanos +
@@ -298,10 +359,6 @@ class PracticeEngine(
                 if (playbackJob?.isActive != true) break
 
                 // Metronome click on whole beats / downbeats
-                if (currentState.metronomeEnabled && slice.isDownbeat) {
-                    audioEngine.playMetronomeClick(isAccent = slice.beatInBar <= 1.05)
-                }
-
                 // Play all events in slice (supports multiple simultaneous notes or single hits)
                 val nonRestEvents = slice.events.filter { !it.isRest }
                 // In REAL_HANDPAN mode, virtual handpan notes MUST be MUTED to prevent speaker feedback loop into the microphone
@@ -328,12 +385,19 @@ class PracticeEngine(
 
                 val primaryEvent = slice.events.firstOrNull()
                 val noteIdx = if (primaryEvent != null) pattern.events.indexOf(primaryEvent) else -1
-                val timelinePosition = practiceTimeline?.positionAtBeat(slice.beatPosition)
+                val timelinePosition = practiceTimeline?.positionAtLoopElapsed(
+                    elapsedNanos = clock.nowNanos() - loopStartNanos,
+                    loopStartBeat = loopStartBeat,
+                    loopEndBeat = (endBar * beatsPerBar).toDouble()
+                )
 
                 // Update UI state for visual tracking
                 _uiState.update {
                     it.copy(
                         timelinePosition = timelinePosition,
+                        targetState = timelinePosition?.let {
+                            PracticeTargetState.from(it, PracticePhase.RUNNING)
+                        },
                         currentBar = timelinePosition?.barNumber ?: slice.barIndex,
                         currentBeatInBar = timelinePosition?.currentBeatInBar ?: slice.beatInBar,
                         currentBeatAbsolute = timelinePosition?.currentBeat ?: slice.beatPosition,
@@ -342,6 +406,9 @@ class PracticeEngine(
                         activeNoteEvent = primaryEvent,
                         activeNoteNumber = timelinePosition?.currentNote?.noteNumber ?: -1
                     )
+                }
+                timelinePosition?.let {
+                    onTimelineBeat?.invoke(it, slice.events, targetSliceNanos)
                 }
 
             }
@@ -373,6 +440,7 @@ class PracticeEngine(
                         phase = PracticePhase.COMPLETED,
                         isPlaying = false,
                         isCountIn = false,
+                        targetState = it.targetState?.copy(phase = PracticePhase.COMPLETED),
                         activeEvents = emptyList(),
                         activeNoteEvent = null,
                         activeNoteNumber = -1
@@ -426,6 +494,9 @@ class PracticeEngine(
             _uiState.update {
                 it.copy(
                     phase = PracticePhase.PREVIEW,
+                    targetState = cursor?.let { position ->
+                        PracticeTargetState.from(position, PracticePhase.PREVIEW)
+                    },
                     previewBeat = cursor?.beatNumber ?: (slice.beatPosition.toInt() + 1),
                     timelinePosition = cursor,
                     currentBar = cursor?.barNumber ?: slice.barIndex,
@@ -456,11 +527,15 @@ class PracticeEngine(
     }
 
     fun setBpm(bpm: Int) {
-        _uiState.update { it.copy(bpm = bpm.coerceIn(40, 240)) }
+        val nextBpm = bpm.coerceIn(40, 240)
+        rebuildTimelinePreservingPosition(nextBpm)
+        _uiState.update { it.copy(bpm = nextBpm) }
     }
 
     fun setSpeedMultiplier(multiplier: Float) {
-        _uiState.update { it.copy(speedMultiplier = multiplier) }
+        val nextMultiplier = multiplier.coerceIn(0.25f, 3.0f)
+        rebuildTimelinePreservingPosition((_uiState.value.bpm * nextMultiplier).toInt().coerceIn(30, 300))
+        _uiState.update { it.copy(speedMultiplier = nextMultiplier) }
     }
 
     fun setPracticeMode(mode: PracticeMode) {
@@ -545,5 +620,18 @@ class PracticeEngine(
         val s = startBar.coerceIn(1, totalBars)
         val e = endBar.coerceIn(s, totalBars)
         _uiState.update { it.copy(loopStartBar = s, loopEndBar = e) }
+    }
+
+    private fun rebuildTimelinePreservingPosition(nextBpm: Int) {
+        val pattern = _uiState.value.pattern ?: return
+        val currentBeat = _uiState.value.timelinePosition?.currentBeat ?: 0.0
+        practiceTimeline = PracticeTimeline(pattern, nextBpm)
+        if (timelineStartNanos != null) {
+            timelineStartNanos = clock.nowNanos() -
+                MusicalTiming.beatToNanos(currentBeat, nextBpm, pattern.timeSignature)
+        }
+        _uiState.update {
+            it.copy(timelinePosition = practiceTimeline?.positionAtBeat(currentBeat))
+        }
     }
 }

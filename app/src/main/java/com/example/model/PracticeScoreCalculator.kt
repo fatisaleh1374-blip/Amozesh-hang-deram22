@@ -46,7 +46,7 @@ object PracticeScoreCalculator {
                 lateCount = results.count { it.timingResult?.status == TimingStatus.LATE },
                 nonCorrectTimingPoints = nonCorrectTimingPoints
             )
-        )
+        ).copy(maxCombo = maxCombo(events))
     }
 
     fun calculate(counters: ScoreCounters): PracticeScore {
@@ -75,9 +75,26 @@ object PracticeScoreCalculator {
             extraCount = counters.extraCount,
             noteAccuracyPercentage = noteAccuracy,
             timingAccuracyPercentage = timingAccuracy,
-            overallAccuracyPercentage = overall
+            overallAccuracyPercentage = overall,
+            maxCombo = maxCombo(counters)
         )
     }
+
+    fun maxCombo(events: List<AssessmentTimelineEvent>): Int {
+        var current = 0
+        var maximum = 0
+        events.filter { it.eventType != AssessmentEventType.EXPECTED }.forEach { event ->
+            if (event.eventType == AssessmentEventType.CORRECT) {
+                current++
+                maximum = maxOf(maximum, current)
+            } else {
+                current = 0
+            }
+        }
+        return maximum
+    }
+
+    private fun maxCombo(counters: ScoreCounters): Int = counters.correctCount
 
     private fun percentage(numerator: Int, denominator: Int): Float {
         if (denominator <= 0) return 0f

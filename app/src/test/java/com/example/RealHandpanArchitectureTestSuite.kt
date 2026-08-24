@@ -15,6 +15,9 @@ import com.example.model.NoteEvent
 import com.example.model.PracticeInputMode
 import com.example.model.StrikeClassification
 import com.example.model.AssessmentEventType
+import com.example.model.PracticeScoreCalculator
+import com.example.model.TimingResult
+import com.example.model.TimingStatus
 import com.example.model.AssessmentTimeline
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -286,6 +289,117 @@ class RealHandpanArchitectureTestSuite {
         assertEquals(cursor.currentNote?.let { testPattern.events.indexOf(it) }, cursor.currentNoteIndex)
         assertEquals(cursor.nextNote, testPattern.events.drop(cursor.currentNoteIndex + 1).firstOrNull { !it.isRest })
         assertTrue(cursor.isOnBeatWindow)
+    }
+
+    @Test
+    fun test10j_timelineDerivesBeatProgressAndPatternProgressFromElapsedTime() {
+        val timeline = com.example.audio.PracticeTimeline(testPattern, bpm = 120)
+
+        val position = timeline.positionAt(750_000_000L)
+
+        assertEquals(1.5, position.currentBeat, 0.0001)
+        assertEquals(0.5f, position.beatProgress, 0.0001f)
+        assertEquals(0.375f, position.barProgress, 0.0001f)
+        assertEquals(
+            (750_000_000f / timeline.durationNanos).coerceIn(0f, 1f),
+            position.patternProgress,
+            0.0001f
+        )
+    }
+
+    @Test
+    fun test10k_timelinePreservesMonotonicLoopPeriod() {
+        val timeline = com.example.audio.PracticeTimeline(testPattern, bpm = 120)
+        val loopDuration = timeline.durationNanos
+
+        val firstLoop = timeline.beatAt(loopDuration - 1L)
+        val secondLoop = timeline.beatAt(loopDuration + loopDuration - 1L)
+
+        assertEquals(timeline.totalBeats, firstLoop, 0.0001)
+        assertEquals(timeline.totalBeats, secondLoop, 0.0001)
+    }
+
+    @Test
+    fun test10l_evaluatorIgnoresHitsBeforePracticeRuns() {
+        evaluator.startAssessment(testPattern, NotePitchConfig.D_KURD_9)
+        evaluator.setPracticeRunning(false)
+        evaluator.notifyExpectedTestTarget(
+            listOf(testPattern.events.first { !it.isRest }),
+            fakeClock.currentNanos
+        )
+
+        val result = evaluator.evaluateDetectedPitch(146.8f, 0.9f)
+
+        assertEquals(null, result)
+        assertEquals(0, evaluator.state.value.totalStrikesEvaluated)
+    }
+
+    @Test
+    fun test10m_scoreAndComboFollowOrderedAssessmentEvents() {
+        fun event(id: String, type: AssessmentEventType) =
+            com.example.model.AssessmentTimelineEvent(
+                eventId = id,
+                sessionId = "score-session",
+                loopId = null,
+                sequenceIndex = id.removePrefix("event-").toInt(),
+                expectedNote = 1,
+                detectedNote = if (type == AssessmentEventType.CORRECT) 1 else null,
+                eventType = type,
+                expectedTimestampNanos = 1_000_000_000L,
+                detectedTimestampNanos = 1_000_000_000L,
+                deviationNanos = 0L,
+                timingResult = if (type == AssessmentEventType.CORRECT) {
+                    TimingResult(TimingStatus.PERFECT, 0L)
+                } else null,
+                confidence = 0.9f,
+                targetId = id,
+                source = "test",
+                durationNanos = null,
+                isConsumed = type == AssessmentEventType.CORRECT
+            )
+
+        val score = PracticeScoreCalculator.calculate(
+            listOf(
+                event("event-1", AssessmentEventType.CORRECT),
+                event("event-2", AssessmentEventType.CORRECT),
+                event("event-3", AssessmentEventType.WRONG),
+                event("event-4", AssessmentEventType.CORRECT)
+            )
+        )
+
+        assertEquals(75f, score.overallAccuracyPercentage, 0.0001f)
+        assertEquals(2, score.maxCombo)
+        assertEquals(2, PracticeScoreCalculator.maxCombo(
+            listOf(
+                event("event-1", AssessmentEventType.CORRECT),
+                event("event-2", AssessmentEventType.CORRECT),
+                event("event-3", AssessmentEventType.WRONG),
+                event("event-4", AssessmentEventType.CORRECT)
+            )
+        ))
+    }
+
+    @Test
+    fun test10n_metronomeConsumesTimelineBeatWithoutCreatingItsOwnPosition() {
+        val metronome = com.example.audio.MetronomeEngine(fakeAudio, clock = fakeClock)
+
+        metronome.consumePracticeBeat(
+            com.example.audio.PracticeBeatEvent(
+                beatNumber = 2,
+                barNumber = 1,
+                beatStartNanos = fakeClock.currentNanos + 500_000_000L,
+                beatProgress = 0f,
+                isDownbeat = false,
+                bpm = 120
+            )
+        )
+
+        assertEquals(2, metronome.state.value.currentBeat)
+        assertEquals(1, metronome.state.value.barIndex)
+        assertEquals(120, metronome.state.value.bpm)
+        assertEquals(fakeClock.currentNanos + 500_000_000L, metronome.state.value.lastTickTimestampNanos)
+        assertEquals(500_000_000L, metronome.state.value.nextTickTimestampNanos -
+            metronome.state.value.lastTickTimestampNanos)
     }
 
     @Test
