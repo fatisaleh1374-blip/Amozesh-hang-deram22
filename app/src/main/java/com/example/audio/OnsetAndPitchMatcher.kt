@@ -3,6 +3,58 @@ package com.example.audio
 import com.example.model.NotePitchConfig
 import kotlin.math.abs
 
+data class OnsetDecision(
+    val isOnset: Boolean,
+    val onsetConfidence: Float,
+    val signalQuality: Float,
+    val noiseFloorRms: Float
+)
+
+class AdaptiveOnsetDetector(
+    private val minimumRms: Float = 0.012f,
+    private val noiseMultiplier: Float = 1.8f,
+    private val noiseAdaptation: Float = 0.08f,
+    private val minimumRise: Float = 0.01f
+) {
+    private var noiseFloorRms = 0.005f
+    private var warmupFrames = 0
+
+    fun reset() {
+        noiseFloorRms = 0.005f
+        warmupFrames = 0
+    }
+
+    fun process(rms: Float, previousRms: Float): OnsetDecision {
+        if (!rms.isFinite() || rms <= 0f) {
+            return OnsetDecision(false, 0f, 0f, noiseFloorRms)
+        }
+
+        val energyRise = rms - previousRms
+        if (warmupFrames < 8) {
+            noiseFloorRms = if (warmupFrames == 0) rms else {
+                noiseFloorRms * 0.8f + rms * 0.2f
+            }
+            warmupFrames++
+            val firstStrongOnset = warmupFrames == 1 && rms >= minimumRms && energyRise >= minimumRise
+            return decision(firstStrongOnset, rms)
+        }
+
+        val threshold = maxOf(minimumRms, noiseFloorRms * noiseMultiplier)
+        val riseThreshold = maxOf(minimumRise, noiseFloorRms * 0.35f)
+        val isOnset = rms >= threshold && energyRise >= riseThreshold
+        if (rms <= noiseFloorRms * 1.25f) {
+            noiseFloorRms += (rms - noiseFloorRms) * noiseAdaptation
+        }
+        return decision(isOnset, rms, threshold)
+    }
+
+    private fun decision(isOnset: Boolean, rms: Float, threshold: Float = minimumRms): OnsetDecision {
+        val quality = ((rms - noiseFloorRms) / maxOf(rms, minimumRms)).coerceIn(0f, 1f)
+        val confidence = if (isOnset) quality else 0f
+        return OnsetDecision(isOnset, confidence, quality, noiseFloorRms)
+    }
+}
+
 /**
  * High-accuracy musical onset detector and note matcher.
  * Uses energy slope, spectral flux estimation, and refractory windows to prevent duplicate triggers.
@@ -10,12 +62,15 @@ import kotlin.math.abs
 class OnsetAndPitchMatcher(
     private val sampleRate: Int = 22050
 ) {
+    private val onsetDetector = AdaptiveOnsetDetector()
     private val yinDetector = YinPitchDetector(
         sampleRate = sampleRate,
         threshold = 0.15,
         minFrequency = 80.0,
         maxFrequency = 900.0
     )
+
+    fun reset() = onsetDetector.reset()
 
     data class StrikeEvaluation(
         val isStrike: Boolean,
@@ -26,7 +81,9 @@ class OnsetAndPitchMatcher(
         val matchedScaleNote: Int?,
         val centsDeviationFromScale: Float,
         val energy: Float,
-        val onsetSampleOffset: Int = 0 // Offset in samples from buffer start where attack occurs
+        val onsetSampleOffset: Int = 0,
+        val onsetConfidence: Float = 0f,
+        val signalQuality: Float = 0f
     )
 
     /**
@@ -39,8 +96,8 @@ class OnsetAndPitchMatcher(
         lastRms: Float,
         scaleConfig: NotePitchConfig
     ): StrikeEvaluation {
-        val energyRise = rms - lastRms
-        val hasEnergyOnset = (energyRise >= 0.020f) || (rms > 0.050f && energyRise > 0.008f)
+        val onset = onsetDetector.process(rms, lastRms)
+        val hasEnergyOnset = onset.isOnset
 
         // Find the sample offset of maximum rising slope for acoustic timestamp precision
         var onsetOffset = 0
@@ -66,7 +123,9 @@ class OnsetAndPitchMatcher(
                 matchedScaleNote = null,
                 centsDeviationFromScale = 999f,
                 energy = rms,
-                onsetSampleOffset = 0
+                onsetSampleOffset = 0,
+                onsetConfidence = 0f,
+                signalQuality = onset.signalQuality
             )
         }
 
@@ -82,7 +141,9 @@ class OnsetAndPitchMatcher(
                 matchedScaleNote = null,
                 centsDeviationFromScale = 0f,
                 energy = rms,
-                onsetSampleOffset = onsetOffset
+                onsetSampleOffset = onsetOffset,
+                onsetConfidence = onset.onsetConfidence,
+                signalQuality = onset.signalQuality
             )
         }
 
@@ -97,7 +158,9 @@ class OnsetAndPitchMatcher(
             matchedScaleNote = matchedNote,
             centsDeviationFromScale = centsDev,
             energy = rms,
-            onsetSampleOffset = onsetOffset
+            onsetSampleOffset = onsetOffset,
+            onsetConfidence = onset.onsetConfidence,
+            signalQuality = onset.signalQuality
         )
     }
 

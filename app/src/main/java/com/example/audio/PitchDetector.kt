@@ -15,6 +15,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.sqrt
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Result of real-time pitch and onset detection from microphone.
@@ -26,7 +27,9 @@ data class DetectedPitchResult(
     val amplitude: Float,
     val matchedNoteNumber: Int?, // 0 for Ding, 1..8, 9 for Slap, or null if outside scale
     val matchedPitchDiffHz: Float,
-    val confidence: Float = 0.8f
+    val confidence: Float = 0.8f,
+    val onsetConfidence: Float = 0f,
+    val signalQuality: Float = 0f
 )
 
 /**
@@ -51,7 +54,9 @@ class PitchDetector(
 
     private var audioRecord: AudioRecord? = null
     private var trackingJob: Job? = null
+    @Volatile
     private var isListening = false
+    private val listeningGeneration = AtomicLong(0L)
     private val detectorScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val onsetMatcher = OnsetAndPitchMatcher(SAMPLE_RATE)
 
@@ -62,6 +67,8 @@ class PitchDetector(
         onContinuousPitch: (DetectedPitchResult) -> Unit = {}
     ): Boolean {
         if (isListening) stopListening()
+        val generation = listeningGeneration.incrementAndGet()
+        onsetMatcher.reset()
 
         val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
             .coerceAtLeast(BUFFER_SIZE * 2)
@@ -116,21 +123,29 @@ class PitchDetector(
                         amplitude = (rms * 5f).coerceIn(0f, 1f),
                         matchedNoteNumber = eval.matchedScaleNote,
                         matchedPitchDiffHz = eval.centsDeviationFromScale,
-                        confidence = eval.confidence
+                        confidence = eval.confidence,
+                        onsetConfidence = eval.onsetConfidence,
+                        signalQuality = eval.signalQuality
                     )
 
-                    if (eval.detectedFreqHz > 0f) {
+                    if (eval.detectedFreqHz > 0f && listeningGeneration.get() == generation && isListening) {
                         withContext(Dispatchers.Main) {
-                            onContinuousPitch(result)
+                            if (listeningGeneration.get() == generation && isListening) {
+                                onContinuousPitch(result)
+                            }
                         }
                     }
 
                     // Refractory window of 130ms (130,000,000 ns) for distinct strikes.
                     // Keep unpitched onsets: the evaluator must score them instead of hiding them.
-                    if (eval.isStrike && (exactStrikeTimestampNanos - lastStrikeTimestampNanos) > 130_000_000L) {
+                    if (eval.isStrike && listeningGeneration.get() == generation && isListening &&
+                        (exactStrikeTimestampNanos - lastStrikeTimestampNanos) > 130_000_000L
+                    ) {
                         lastStrikeTimestampNanos = exactStrikeTimestampNanos
                         withContext(Dispatchers.Main) {
-                            onStrikeDetected(result, exactStrikeTimestampNanos)
+                            if (listeningGeneration.get() == generation && isListening) {
+                                onStrikeDetected(result, exactStrikeTimestampNanos)
+                            }
                         }
                     }
 
@@ -151,6 +166,7 @@ class PitchDetector(
         get() = isListening
 
     fun stopListening() {
+        listeningGeneration.incrementAndGet()
         isListening = false
         trackingJob?.cancel()
         trackingJob = null
@@ -162,6 +178,7 @@ class PitchDetector(
     }
 
     fun release() {
+        listeningGeneration.incrementAndGet()
         stopListening()
         detectorScope.cancel()
     }

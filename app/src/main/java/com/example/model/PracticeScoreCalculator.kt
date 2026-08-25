@@ -13,7 +13,94 @@ data class ScoreCounters(
     val nonCorrectTimingPoints: Int = 0
 )
 
+data class AssessmentWeightProfile(
+    val timing: Float = 0.30f,
+    val noteAccuracy: Float = 0.30f,
+    val completion: Float = 0.20f,
+    val consistency: Float = 0.10f,
+    val confidence: Float = 0.10f
+) {
+    init {
+        require(timing >= 0f && noteAccuracy >= 0f && completion >= 0f && consistency >= 0f && confidence >= 0f)
+        require((timing + noteAccuracy + completion + consistency + confidence) in 0.999f..1.001f)
+    }
+}
+
+data class CanonicalAssessmentMetrics(
+    val overallPerformance: Float,
+    val timingScore: Float,
+    val pitchScore: Float,
+    val noteAccuracy: Float,
+    val completionRate: Float,
+    val missRate: Float,
+    val falseStrikeRate: Float,
+    val consistencyScore: Float,
+    val confidenceScore: Float
+)
+
 object PracticeScoreCalculator {
+    fun calculateMetrics(
+        events: List<AssessmentTimelineEvent>,
+        weights: AssessmentWeightProfile = AssessmentWeightProfile()
+    ): CanonicalAssessmentMetrics {
+        val expected = events.filter { it.eventType == AssessmentEventType.EXPECTED }
+        val results = events.filter { it.eventType != AssessmentEventType.EXPECTED }
+        val scored = results.filter { it.eventType != AssessmentEventType.EXTRA && it.eventType != AssessmentEventType.MISSED }
+        val correct = results.count { it.eventType == AssessmentEventType.CORRECT }
+        val noteDenominator = results.count {
+            it.eventType == AssessmentEventType.CORRECT ||
+                it.eventType == AssessmentEventType.WRONG ||
+                it.eventType == AssessmentEventType.UNKNOWN ||
+                it.eventType == AssessmentEventType.MISSED
+        }
+        val timingValues = scored.map { event ->
+            when (event.timingResult?.status) {
+                TimingStatus.PERFECT -> 100f
+                TimingStatus.EXCELLENT -> 90f
+                TimingStatus.GOOD -> 80f
+                TimingStatus.EARLY, TimingStatus.LATE -> 50f
+                else -> 0f
+            }
+        }
+        val timingScore = timingValues.averageOrZero()
+        val deviations = scored.mapNotNull { it.deviationNanos?.toDouble() }
+        val consistencyScore = if (deviations.size < 2) 100f else {
+            val mean = deviations.average()
+            (100.0 - kotlin.math.sqrt(deviations.map { (it - mean) * (it - mean) }.average()) / 1_000_000.0)
+                .coerceIn(0.0, 100.0).toFloat()
+        }
+        val detected = results.filter { it.eventType != AssessmentEventType.MISSED }
+        val confidenceScore = detected.map { it.confidence }.averageOrZero()
+        val completionRate = percentage(correct, expected.size)
+        val missRate = percentage(results.count { it.eventType == AssessmentEventType.MISSED }, expected.size)
+        val falseStrikeRate = percentage(results.count { it.eventType == AssessmentEventType.EXTRA }, results.size)
+        val noteAccuracy = percentage(correct, noteDenominator)
+        val pitchDenominator = results.count {
+            it.eventType == AssessmentEventType.CORRECT ||
+                it.eventType == AssessmentEventType.WRONG ||
+                it.eventType == AssessmentEventType.UNKNOWN
+        }
+        val pitchScore = percentage(correct, pitchDenominator)
+        val overall = (
+            timingScore * weights.timing +
+                confidenceScore * weights.confidence +
+                noteAccuracy * weights.noteAccuracy +
+                completionRate * weights.completion +
+                consistencyScore * weights.consistency
+            ).coerceIn(0f, 100f)
+        return CanonicalAssessmentMetrics(
+            overallPerformance = overall,
+            timingScore = timingScore,
+            pitchScore = pitchScore,
+            noteAccuracy = noteAccuracy,
+            completionRate = completionRate,
+            missRate = missRate,
+            falseStrikeRate = falseStrikeRate,
+            consistencyScore = consistencyScore,
+            confidenceScore = confidenceScore
+        )
+    }
+
     fun calculate(timeline: AssessmentTimeline): PracticeScore =
         calculate(timeline.snapshot())
 
@@ -26,6 +113,7 @@ object PracticeScoreCalculator {
         val extra = results.count { it.eventType == AssessmentEventType.EXTRA }
         fun timingPoints(event: AssessmentTimelineEvent): Int = when (event.timingResult?.status) {
             TimingStatus.PERFECT -> 100
+            TimingStatus.EXCELLENT -> 90
             TimingStatus.GOOD -> 80
             TimingStatus.EARLY, TimingStatus.LATE -> 50
             TimingStatus.OUTSIDE_WINDOW, null -> 0
@@ -158,4 +246,6 @@ object PracticeScoreCalculator {
         if (denominator <= 0) return 0f
         return (numerator.toFloat() / denominator.toFloat() * 100f).coerceIn(0f, 100f)
     }
+
+    private fun List<Float>.averageOrZero(): Float = if (isEmpty()) 0f else average().toFloat()
 }

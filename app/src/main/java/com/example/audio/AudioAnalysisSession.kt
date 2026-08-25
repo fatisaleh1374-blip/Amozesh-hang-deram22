@@ -48,7 +48,9 @@ open class AudioAnalysisSession(
                             pitchConfidence = result.confidence,
                             onsetStrength = result.amplitude,
                             energy = result.amplitude,
-                            pitchValid = result.matchedNoteNumber != null && result.confidence >= 0.5f
+                            pitchValid = result.matchedNoteNumber != null && result.confidence >= 0.5f,
+                            onsetConfidence = result.onsetConfidence,
+                            signalQuality = result.signalQuality
                         )
                         listeners.forEach { it.onStrike(event) }
                     },

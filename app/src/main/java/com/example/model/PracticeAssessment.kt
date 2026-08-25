@@ -132,6 +132,8 @@ data class DetectedStrikeEvent(
     val onsetStrength: Float,
     val energy: Float,
     val pitchValid: Boolean,
+    val onsetConfidence: Float = 0f,
+    val signalQuality: Float = 0f,
     val source: String = "microphone",
     val durationNanos: Long? = null
 )

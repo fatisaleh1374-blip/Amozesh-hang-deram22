@@ -15,6 +15,26 @@ import kotlin.math.sin
 class DspAndAcousticVerificationTest {
 
     @Test
+    fun steadyBackgroundNoiseDoesNotBecomeAnOnsetAfterNoiseFloorIsLearned() {
+        val matcher = OnsetAndPitchMatcher(22050)
+        val config = NotePitchConfig.D_KURD_9
+
+        repeat(12) {
+            matcher.processFrame(ShortArray(2048), 2048, rms = 0.06f, lastRms = 0.06f, config)
+        }
+
+        val noiseRise = matcher.processFrame(
+            buffer = ShortArray(2048),
+            readSamples = 2048,
+            rms = 0.061f,
+            lastRms = 0.05f,
+            scaleConfig = config
+        )
+
+        assertTrue("A learned noise floor must reject a small noise fluctuation", !noiseRise.isStrike)
+    }
+
+    @Test
     fun testYinPitchDetectionOnPureSine_440Hz() {
         val sampleRate = 22050
         val targetFreq = 440.0 // A4

@@ -14,6 +14,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * High-performance audio engine managing SoundPool polyphonic playback for Handpan notes and Metronome.
@@ -24,17 +25,22 @@ open class AudioEngine(private val context: Context? = null) {
     private val soundPool: SoundPool?
     private val audioFocusManager: AudioFocusManager?
     private val loadedSoundIds = java.util.Collections.synchronizedSet(mutableSetOf<Int>())
+    private val soundMapLock = Any()
     private val noteSoundMap = mutableMapOf<Int, Int>() // Note number (0=Ding, 1..8, 9=Slap) -> SoundPool SoundId
     private val accentSoundMap = mutableMapOf<Int, Int>() // Note number -> Accented SoundId
     private var clickAccentId: Int = 0
     private var clickRegularId: Int = 0
 
+    @Volatile
     private var pitchConfig: NotePitchConfig = NotePitchConfig()
     private var masterVolume: Float = 1.0f
     private var metronomeVolume: Float = 0.8f
     private var isMuted: Boolean = false
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var sampleLoadJob: Job? = null
+    private val sampleGeneration = AtomicLong(0L)
+    @Volatile
+    private var released = false
 
     init {
         audioFocusManager = context?.let { AudioFocusManager(it) }
@@ -50,7 +56,7 @@ open class AudioEngine(private val context: Context? = null) {
                 .build()
 
             pool.setOnLoadCompleteListener { _, sampleId, status ->
-                if (status == 0) {
+                if (status == 0 && !released) {
                     loadedSoundIds.add(sampleId)
                 }
             }
@@ -70,25 +76,27 @@ open class AudioEngine(private val context: Context? = null) {
     open fun loadSamples(config: NotePitchConfig) {
         this.pitchConfig = config
         val currentCtx = context ?: return
+        val generation = sampleGeneration.incrementAndGet()
         sampleLoadJob?.cancel()
         sampleLoadJob = engineScope.launch {
             try {
+                if (!isCurrentGeneration(generation)) return@launch
                 // 1. Synthesize clicks
                 val clickAccentWav = HandpanSynthesizer.pcmToWav(HandpanSynthesizer.generateClickSample(isAccent = true))
                 val clickRegularWav = HandpanSynthesizer.pcmToWav(HandpanSynthesizer.generateClickSample(isAccent = false))
-                clickAccentId = loadWavFromBytes(clickAccentWav, "click_accent.wav")
-                clickRegularId = loadWavFromBytes(clickRegularWav, "click_regular.wav")
+                clickAccentId = loadWavFromBytes(clickAccentWav, "click_accent_$generation.wav")
+                clickRegularId = loadWavFromBytes(clickRegularWav, "click_regular_$generation.wav")
 
                 // 2. Load Ding (Note 0) - custom sample or synth
-                loadSingleNote(NotePitchConfig.NOTE_DING, config)
+                loadSingleNote(NotePitchConfig.NOTE_DING, config, generation)
 
                 // 3. Load surrounding notes 1 through 8
                 for (noteNumber in 1..8) {
-                    loadSingleNote(noteNumber, config)
+                    loadSingleNote(noteNumber, config, generation)
                 }
 
                 // 4. Load Slap / Tak strike (Note 9 / S)
-                loadSingleNote(NotePitchConfig.NOTE_SLAP, config)
+                loadSingleNote(NotePitchConfig.NOTE_SLAP, config, generation)
 
             } catch (e: Exception) {
                 Log.e("AudioEngine", "Error initializing audio samples: ${e.message}", e)
@@ -101,9 +109,11 @@ open class AudioEngine(private val context: Context? = null) {
      */
     open fun reloadNoteSample(noteNumber: Int) {
         if (context == null) return
+        val generation = sampleGeneration.incrementAndGet()
+        val config = pitchConfig
         sampleLoadJob?.cancel()
         sampleLoadJob = engineScope.launch {
-            loadSingleNote(noteNumber, pitchConfig)
+            loadSingleNote(noteNumber, config, generation)
         }
     }
 
@@ -126,15 +136,15 @@ open class AudioEngine(private val context: Context? = null) {
         reloadNoteSample(noteNumber)
     }
 
-    private fun loadSingleNote(noteNumber: Int, config: NotePitchConfig) {
+    private fun loadSingleNote(noteNumber: Int, config: NotePitchConfig, generation: Long) {
         val currentCtx = context ?: return
         val pool = soundPool ?: return
+        if (!isCurrentGeneration(generation)) return
         val customFile = CustomSampleRecorder.getCustomSampleFile(currentCtx, noteNumber)
         if (customFile.exists() && customFile.length() > 44) {
             try {
                 val soundId = pool.load(customFile.absolutePath, 1)
-                noteSoundMap[noteNumber] = soundId
-                accentSoundMap[noteNumber] = soundId
+                replaceNoteSounds(noteNumber, soundId, soundId, generation)
                 if (BuildConfig.DEBUG) {
                     Log.d("AudioEngine", "Loaded custom real recorded sample for note $noteNumber")
                 }
@@ -154,7 +164,7 @@ open class AudioEngine(private val context: Context? = null) {
                 velocity = 0.9f
             )
             val dingRegularWav = HandpanSynthesizer.pcmToWav(dingRegularPcm)
-            noteSoundMap[NotePitchConfig.NOTE_DING] = loadWavFromBytes(dingRegularWav, "note_ding_regular.wav")
+            val regularId = loadWavFromBytes(dingRegularWav, "note_ding_regular_$generation.wav")
 
             val dingAccentPcm = HandpanSynthesizer.generateHandpanSample(
                 frequency = dingFreq,
@@ -163,15 +173,17 @@ open class AudioEngine(private val context: Context? = null) {
                 velocity = 1.0f
             )
             val dingAccentWav = HandpanSynthesizer.pcmToWav(dingAccentPcm)
-            accentSoundMap[NotePitchConfig.NOTE_DING] = loadWavFromBytes(dingAccentWav, "note_ding_accent.wav")
+            val accentId = loadWavFromBytes(dingAccentWav, "note_ding_accent_$generation.wav")
+            replaceNoteSounds(NotePitchConfig.NOTE_DING, regularId, accentId, generation)
         } else if (noteNumber == NotePitchConfig.NOTE_SLAP) {
             val slapRegularPcm = HandpanSynthesizer.generateSlapSample(velocity = 0.85f)
             val slapRegularWav = HandpanSynthesizer.pcmToWav(slapRegularPcm)
-            noteSoundMap[NotePitchConfig.NOTE_SLAP] = loadWavFromBytes(slapRegularWav, "slap_regular.wav")
+            val regularId = loadWavFromBytes(slapRegularWav, "slap_regular_$generation.wav")
 
             val slapAccentPcm = HandpanSynthesizer.generateSlapSample(velocity = 1.0f)
             val slapAccentWav = HandpanSynthesizer.pcmToWav(slapAccentPcm)
-            accentSoundMap[NotePitchConfig.NOTE_SLAP] = loadWavFromBytes(slapAccentWav, "slap_accent.wav")
+            val accentId = loadWavFromBytes(slapAccentWav, "slap_accent_$generation.wav")
+            replaceNoteSounds(NotePitchConfig.NOTE_SLAP, regularId, accentId, generation)
         } else {
             val freq = config.getFrequency(noteNumber)
             val regularPcm = HandpanSynthesizer.generateHandpanSample(
@@ -181,8 +193,7 @@ open class AudioEngine(private val context: Context? = null) {
                 velocity = 0.85f
             )
             val regularWav = HandpanSynthesizer.pcmToWav(regularPcm)
-            val regularId = loadWavFromBytes(regularWav, "note_${noteNumber}_regular.wav")
-            noteSoundMap[noteNumber] = regularId
+            val regularId = loadWavFromBytes(regularWav, "note_${noteNumber}_regular_$generation.wav")
 
             val accentPcm = HandpanSynthesizer.generateHandpanSample(
                 frequency = freq,
@@ -191,8 +202,27 @@ open class AudioEngine(private val context: Context? = null) {
                 velocity = 1.0f
             )
             val accentWav = HandpanSynthesizer.pcmToWav(accentPcm)
-            val accentId = loadWavFromBytes(accentWav, "note_${noteNumber}_accent.wav")
+            val accentId = loadWavFromBytes(accentWav, "note_${noteNumber}_accent_$generation.wav")
+            replaceNoteSounds(noteNumber, regularId, accentId, generation)
+        }
+    }
+
+    private fun isCurrentGeneration(generation: Long): Boolean =
+        !released && sampleGeneration.get() == generation
+
+    private fun replaceNoteSounds(noteNumber: Int, regularId: Int, accentId: Int, generation: Long) {
+        if (!isCurrentGeneration(generation)) return
+        val oldIds = synchronized(soundMapLock) {
+            val old = setOfNotNull(noteSoundMap[noteNumber], accentSoundMap[noteNumber])
+            noteSoundMap[noteNumber] = regularId
             accentSoundMap[noteNumber] = accentId
+            old
+        }
+        oldIds.forEach { soundId ->
+            if (soundId != regularId && soundId != accentId) {
+                loadedSoundIds.remove(soundId)
+                soundPool?.unload(soundId)
+            }
         }
     }
 
@@ -214,10 +244,9 @@ open class AudioEngine(private val context: Context? = null) {
         if (isMuted || (noteNumber !in 0..8 && noteNumber != NotePitchConfig.NOTE_SLAP)) return
         if (audioFocusManager?.request() == false) return
 
-        val soundId = if (accent) {
-            accentSoundMap[noteNumber] ?: noteSoundMap[noteNumber]
-        } else {
-            noteSoundMap[noteNumber]
+        val soundId = synchronized(soundMapLock) {
+            if (accent) accentSoundMap[noteNumber] ?: noteSoundMap[noteNumber]
+            else noteSoundMap[noteNumber]
         } ?: return
 
         if (!loadedSoundIds.contains(soundId)) return
@@ -256,8 +285,21 @@ open class AudioEngine(private val context: Context? = null) {
     }
 
     open fun release() {
+        if (released) return
+        released = true
+        sampleGeneration.incrementAndGet()
         sampleLoadJob?.cancel()
         engineScope.cancel()
+        synchronized(soundMapLock) {
+            (noteSoundMap.values + accentSoundMap.values + listOf(clickAccentId, clickRegularId))
+                .distinct()
+                .forEach { soundPool?.unload(it) }
+            noteSoundMap.clear()
+            accentSoundMap.clear()
+            clickAccentId = 0
+            clickRegularId = 0
+        }
+        loadedSoundIds.clear()
         audioFocusManager?.abandon()
         try {
             soundPool?.release()
