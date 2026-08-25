@@ -26,7 +26,7 @@ class PracticeTimeline(
     private val pattern: HandpanPattern,
     val bpm: Int = pattern.bpm
 ) {
-    private val beatDurationNanos = MusicalTiming.beatDurationNanos(bpm)
+    private val beatDurationNanos = MusicalTiming.signatureBeatDurationNanos(bpm, pattern.timeSignature)
     private val totalDurationNanos = MusicalTiming.beatToNanos(
         pattern.totalBeats,
         bpm,
@@ -74,11 +74,12 @@ class PracticeTimeline(
         elapsed: Long,
         countdownRemaining: Int
     ): PracticeTimelinePosition {
-        val currentIndex = pattern.events.indexOfLast { event ->
+        val orderedEvents = pattern.orderedEvents
+        val currentIndex = orderedEvents.indexOfLast { event ->
             !event.isRest && event.beatPosition <= beat + PatternScheduler.BEAT_EPSILON
         }
-        val current = pattern.events.getOrNull(currentIndex)
-        val next = pattern.events.drop(currentIndex + 1).firstOrNull { !it.isRest }
+        val current = orderedEvents.getOrNull(currentIndex)
+        val next = orderedEvents.drop(currentIndex + 1).firstOrNull { !it.isRest }
         val beatFraction = (beat - kotlin.math.floor(beat)).toFloat()
         val progress = if (totalDurationNanos == 0L) 1f
         else elapsed.toFloat() / totalDurationNanos.toFloat()

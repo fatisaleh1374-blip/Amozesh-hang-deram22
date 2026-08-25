@@ -12,6 +12,11 @@ import com.example.data.builtin.BuiltinExercises
 import com.example.model.HandpanPattern
 import com.example.model.NotePitchConfig
 import com.example.model.NoteEvent
+import com.example.model.DetectedStrikeEvent
+import com.example.data.local.RecordingTrackEntity
+import com.example.data.local.toDomainOrNull
+import com.example.ui.screens.RhythmTapEvaluator
+import com.example.ui.screens.TapTimingAccuracy
 import com.example.model.PracticeInputMode
 import com.example.model.StrikeClassification
 import com.example.model.AssessmentEventType
@@ -32,6 +37,23 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import androidx.test.core.app.ApplicationProvider
 import android.content.Context
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+
+private class CountingAudioAnalysisSession : com.example.audio.AudioAnalysisSession() {
+    var acquireCount = 0
+    var activeSubscriptions = 0
+
+    override fun acquire(
+        scaleConfig: NotePitchConfig,
+        onStrike: (DetectedStrikeEvent) -> Unit,
+        onPitch: (com.example.audio.DetectedPitchResult) -> Unit
+    ): Subscription {
+        acquireCount++
+        activeSubscriptions++
+        return Subscription({ activeSubscriptions-- })
+    }
+}
 
 class FakePracticeClock(var initialNanos: Long = 1_000_000_000L) : PracticeClock {
     var currentNanos = initialNanos
@@ -106,6 +128,133 @@ class RealHandpanArchitectureTestSuite {
         practiceEngine.setInputMode(PracticeInputMode.REAL_HANDPAN)
         assertEquals(PracticeInputMode.REAL_HANDPAN, practiceEngine.uiState.value.inputMode)
         assertTrue(practiceEngine.uiState.value.acousticAssessmentEnabled)
+    }
+
+    @Test
+    fun realHandpanStartCreatesOneAssessmentSessionWhenEvaluatorWasEnabled() = runBlocking {
+        val session = CountingAudioAnalysisSession()
+        val sessionEvaluator = AcousticPracticeEvaluator(
+            clock = PracticeClock.Default,
+            analysisSession = session,
+            ownsAnalysisSession = false
+        )
+        val engine = PracticeEngine(
+            audioEngine = fakeAudio,
+            acousticEvaluator = sessionEvaluator
+        )
+        engine.loadPattern(testPattern)
+        engine.setInputMode(PracticeInputMode.REAL_HANDPAN)
+        engine.setPreviewEnabled(false)
+        engine.toggleCountIn()
+
+        engine.play()
+        delay(120)
+
+        assertEquals(1, session.acquireCount)
+        assertEquals(1, session.activeSubscriptions)
+        engine.stop()
+        assertEquals(0, session.activeSubscriptions)
+        sessionEvaluator.release()
+        engine.release()
+    }
+
+    @Test
+    fun practiceInputNoteOnlySynthesizesInVirtualMode() {
+        practiceEngine.loadPattern(testPattern)
+        practiceEngine.setInputMode(PracticeInputMode.REAL_HANDPAN)
+        practiceEngine.playInputNote(1)
+        assertEquals(0, fakeAudio.playedNotes.size)
+
+        practiceEngine.setInputMode(PracticeInputMode.VIRTUAL_HANDPAN)
+        practiceEngine.playInputNote(1)
+        assertEquals(listOf(1), fakeAudio.playedNotes)
+    }
+
+    @Test
+    fun sixEightTimelineUsesEighthNoteAsThePatternBeat() {
+        val pattern = HandpanPattern(
+            id = "six-eight",
+            title = "6/8",
+            description = "timing",
+            bpm = 120,
+            timeSignature = com.example.model.TimeSignature.SixEight68,
+            events = listOf(NoteEvent(noteNumber = 0, beatPosition = 1.0))
+        )
+        val timeline = com.example.audio.PracticeTimeline(pattern, bpm = 120)
+
+        assertEquals(1.0, timeline.beatAt(250_000_000L), 0.0001)
+        assertEquals(2, timeline.positionAt(250_000_000L).beatNumber)
+        assertEquals(1, timeline.positionAt(250_000_000L).barNumber)
+        assertEquals(
+            250_000_000L,
+            com.example.audio.MusicalTiming.beatToNanos(1.0, 120, pattern.timeSignature)
+        )
+    }
+
+    @Test
+    fun instrumentProfileProducesMatchingPitchConfiguration() {
+        val config = NotePitchConfig.fromProfile(com.example.model.InstrumentProfile.D_MAJOR)
+
+        assertEquals("D Major", config.scaleName)
+        assertEquals(196.0f, config.getFrequency(1), 0.01f)
+        assertEquals(369.99f, config.getFrequency(7), 0.01f)
+        assertEquals(NotePitchConfig.NOTE_SLAP, config.notePitches[9]?.number)
+    }
+
+    @Test
+    fun patternRejectsEventsOutsideItsDurationAndExposesCanonicalOrder() {
+        val unsorted = HandpanPattern(
+            id = "unsorted",
+            title = "unsorted",
+            description = "ordering",
+            events = listOf(
+                NoteEvent(noteNumber = 1, beatPosition = 1.0),
+                NoteEvent(noteNumber = 0, beatPosition = 0.0)
+            )
+        )
+        assertEquals(listOf(0, 1), unsorted.orderedEvents.map { it.noteNumber })
+
+        var rejected = false
+        try {
+            HandpanPattern(
+                id = "out-of-range",
+                title = "invalid",
+                description = "invalid",
+                events = listOf(NoteEvent(noteNumber = 0, beatPosition = 4.0))
+            )
+        } catch (_: IllegalArgumentException) {
+            rejected = true
+        }
+        assertTrue(rejected)
+    }
+
+    @Test
+    fun corruptedRecordingIsDroppedWithoutCreatingSyntheticData() {
+        val valid = RecordingTrackEntity(
+            id = "valid",
+            title = "valid",
+            date = "2026/08/25",
+            scaleId = "D Kurd",
+            durationMs = 500L,
+            eventsJson = "[]"
+        )
+        val corrupted = valid.copy(eventsJson = "[{\"noteNumber\":0,\"timestampMs\":0,\"classification\":\"UNKNOWN_FUTURE\"}]")
+
+        assertNotNull(valid.toDomainOrNull())
+        assertEquals(null, corrupted.toDomainOrNull())
+    }
+
+    @Test
+    fun rhythmTrainerClassifiesTapsOutsideTheTimingWindowAsMissed() {
+        val target = 1_000_000_000L
+        val (deltaMs, accuracy) = RhythmTapEvaluator.evaluate(
+            tapNanos = target + 200_000_000L,
+            previousTargetNanos = target,
+            nextTargetNanos = target + 500_000_000L
+        )
+
+        assertEquals(200L, deltaMs)
+        assertEquals(TapTimingAccuracy.MISSED, accuracy)
     }
 
     // 4. In REAL_HANDPAN mode, acoustic assessment evaluates strikes accurately

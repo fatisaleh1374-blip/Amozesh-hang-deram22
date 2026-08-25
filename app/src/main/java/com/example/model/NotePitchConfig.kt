@@ -46,6 +46,22 @@ data class NotePitchConfig(
         const val NOTE_DING = HandpanNote.DING_NUMBER
         const val NOTE_SLAP = HandpanNote.SLAP_NUMBER
 
+        fun fromProfile(profile: InstrumentProfile): NotePitchConfig {
+            val pitches = profile.fields.associate { field ->
+                field.displayNumber to NotePitch(
+                    number = field.displayNumber,
+                    name = "${field.scientificPitch} (${field.solfegeName})",
+                    frequencyHz = field.frequencyHz,
+                    symbol = if (field.isDing) "D" else field.displayNumber.toString()
+                )
+            } + (NOTE_SLAP to NotePitch(NOTE_SLAP, "Slap / Tak (ضربه اسلپ)", 0.0f, "S"))
+            return NotePitchConfig(
+                scaleName = profile.scaleName,
+                notePitches = pitches,
+                tuningReferenceHz = profile.tuningReferenceHz
+            )
+        }
+
         // Standard D Kurd 9: Ding (D3) + 8 surrounding notes (A3, Bb3, C4, D4, E4, F4, G4, A4)
         val DEFAULT_D_KURD_9_PITCHES = mapOf(
             NOTE_DING to NotePitch(NOTE_DING, "D3 (دینگ)", 146.83f, "D"),

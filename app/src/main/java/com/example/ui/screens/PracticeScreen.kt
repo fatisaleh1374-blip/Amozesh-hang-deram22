@@ -482,7 +482,7 @@ fun PracticeScreen(
             HandpanDiscView(
                 activeNoteNumber = targetState?.currentNote?.noteNumber ?: -1,
                 onNoteTapped = { noteNum ->
-                    viewModel.playNoteDirect(noteNum)
+                    viewModel.practiceEngine.playInputNote(noteNum)
                 },
                 modifier = Modifier.size(240.dp),
                 isInteractive = true,

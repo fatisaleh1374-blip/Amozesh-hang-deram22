@@ -31,6 +31,19 @@ data class HandpanPattern(
     val isCustom: Boolean = false,
     val recommendedSubdivision: Subdivision = Subdivision.QUARTER
 ) {
+    init {
+        require(bpm in 30..300) { "BPM must be between 30 and 300" }
+        require(bars > 0) { "Bars must be positive" }
+        require(events.all { it.beatPosition < totalBeats }) {
+            "Every event must start inside the pattern duration"
+        }
+    }
+
+    val orderedEvents: List<NoteEvent>
+        get() = events.withIndex()
+            .sortedWith(compareBy<IndexedValue<NoteEvent>> { it.value.beatPosition }.thenBy { it.index })
+            .map { it.value }
+
     val totalBeats: Double
         get() = (bars * timeSignature.beatsPerBar).toDouble()
 

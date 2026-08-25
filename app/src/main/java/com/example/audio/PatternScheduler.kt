@@ -43,6 +43,9 @@ class PatternScheduler {
             scheduleStartTimestampNanos: Long = 0L,
             bpm: Int = 60
         ): List<ScheduledTimeSlice> {
+            val orderedEvents = events.withIndex()
+                .sortedWith(compareBy<IndexedValue<NoteEvent>> { it.value.beatPosition }.thenBy { it.index })
+                .map { it.value }
             val clampedStart = startBar.coerceIn(1, totalBars)
             val clampedEnd = endBar.coerceIn(clampedStart, totalBars)
 
@@ -60,7 +63,7 @@ class PatternScheduler {
             }
 
             // 2. Add all event beat positions in range
-            events.filter { it.beatPosition in (startBeat - BEAT_EPSILON)..(endBeat - BEAT_EPSILON) }
+            orderedEvents.filter { it.beatPosition in (startBeat - BEAT_EPSILON)..(endBeat - BEAT_EPSILON) }
                 .forEach { event ->
                     beatPositions.add(Math.round(event.beatPosition * 1000.0) / 1000.0)
                 }
@@ -74,7 +77,7 @@ class PatternScheduler {
                 val isDownbeat = timeSignature.isGroupedAccent(beatInBarIndex) &&
                     Math.abs(pos - Math.floor(pos)) < BEAT_EPSILON
 
-                val matchingEvents = events.filter {
+                val matchingEvents = orderedEvents.filter {
                     Math.abs(it.beatPosition - pos) < BEAT_EPSILON
                 }
 

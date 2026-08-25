@@ -232,9 +232,21 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun setInstrumentProfile(profile: InstrumentProfile) {
-        _appUiState.update { it.copy(currentInstrumentProfile = profile) }
+        val config = NotePitchConfig.fromProfile(profile)
+        _appUiState.update {
+            it.copy(
+                currentInstrumentProfile = profile,
+                currentScaleConfig = config
+            )
+        }
+        audioEngine.loadSamples(config)
+        practiceEngine.acousticEvaluator.setScaleConfig(config)
         context.getSharedPreferences("handpan_prefs", Context.MODE_PRIVATE)
-            .edit().putString("instrument_profile", profile.name).apply()
+            .edit()
+            .putString("instrument_profile", profile.name)
+            .putString("scale_name", config.scaleName)
+            .putFloat("tuning_reference_hz", config.tuningReferenceHz)
+            .apply()
     }
 
     fun openSamplerDialog(noteNumber: Int = 0) {

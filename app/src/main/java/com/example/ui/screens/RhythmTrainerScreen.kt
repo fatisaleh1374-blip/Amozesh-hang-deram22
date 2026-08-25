@@ -100,6 +100,36 @@ data class TapScoreEntry(
     val accuracy: TapTimingAccuracy
 )
 
+object RhythmTapEvaluator {
+    const val DEFAULT_WINDOW_MS = 160L
+
+    fun evaluate(
+        tapNanos: Long,
+        previousTargetNanos: Long,
+        nextTargetNanos: Long,
+        windowMs: Long = DEFAULT_WINDOW_MS
+    ): Pair<Long, TapTimingAccuracy> {
+        if (previousTargetNanos <= 0L && nextTargetNanos <= 0L) {
+            return 0L to TapTimingAccuracy.MISSED
+        }
+        val previousDistance = if (previousTargetNanos > 0L) {
+            kotlin.math.abs(tapNanos - previousTargetNanos)
+        } else Long.MAX_VALUE
+        val nextDistance = if (nextTargetNanos > 0L) {
+            kotlin.math.abs(tapNanos - nextTargetNanos)
+        } else Long.MAX_VALUE
+        val target = if (previousDistance <= nextDistance) previousTargetNanos else nextTargetNanos
+        val deltaMs = (tapNanos - target) / 1_000_000L
+        val accuracy = when {
+            kotlin.math.abs(deltaMs) <= 45L -> TapTimingAccuracy.PERFECT
+            kotlin.math.abs(deltaMs) <= windowMs ->
+                if (deltaMs < 0L) TapTimingAccuracy.EARLY else TapTimingAccuracy.LATE
+            else -> TapTimingAccuracy.MISSED
+        }
+        return deltaMs to accuracy
+    }
+}
+
 @Composable
 fun RhythmTrainerScreen(
     viewModel: HandpanViewModel,
@@ -124,6 +154,7 @@ fun RhythmTrainerScreen(
     var perfectTapsCount by remember { mutableIntStateOf(0) }
     var earlyTapsCount by remember { mutableIntStateOf(0) }
     var lateTapsCount by remember { mutableIntStateOf(0) }
+    var missedTapsCount by remember { mutableIntStateOf(0) }
     var totalTapsCount by remember { mutableIntStateOf(0) }
 
     val scrollState = rememberScrollState()
@@ -140,6 +171,7 @@ fun RhythmTrainerScreen(
         perfectTapsCount = 0
         earlyTapsCount = 0
         lateTapsCount = 0
+        missedTapsCount = 0
         totalTapsCount = 0
         streakCount = 0
         lastFeedbackStatus = null
@@ -166,23 +198,14 @@ fun RhythmTrainerScreen(
         lastTargetBeatNanos = tick.lastTickTimestampNanos
         nextTargetBeatNanos = tick.nextTickTimestampNanos
         currentBeatNumber = tick.currentBeat
-        val distToLast = Math.abs(tapNanos - lastTargetBeatNanos)
-        val distToNext = Math.abs(tapNanos - nextTargetBeatNanos)
-
-        val (nearestTargetNanos, rawDeltaNanos) = if (distToLast <= distToNext) {
-            Pair(lastTargetBeatNanos, tapNanos - lastTargetBeatNanos)
-        } else {
-            Pair(nextTargetBeatNanos, tapNanos - nextTargetBeatNanos)
-        }
-
-        val deltaMs = rawDeltaNanos / 1_000_000L
-        val absDeltaMs = Math.abs(deltaMs)
-
-        val accuracy = when {
-            absDeltaMs <= 45 -> TapTimingAccuracy.PERFECT
-            deltaMs < -45 -> TapTimingAccuracy.EARLY
-            else -> TapTimingAccuracy.LATE
-        }
+        val (deltaMs, accuracy) = RhythmTapEvaluator.evaluate(
+            tapNanos = tapNanos,
+            previousTargetNanos = lastTargetBeatNanos,
+            nextTargetNanos = nextTargetBeatNanos
+        )
+        val nearestTargetNanos = if (lastTargetBeatNanos > 0L &&
+            kotlin.math.abs(tapNanos - lastTargetBeatNanos) <= kotlin.math.abs(tapNanos - nextTargetBeatNanos)
+        ) lastTargetBeatNanos else nextTargetBeatNanos
 
         lastFeedbackStatus = accuracy
         lastDeltaMs = deltaMs
@@ -206,6 +229,7 @@ fun RhythmTrainerScreen(
                 viewModel.hapticHelper.performClick(false)
             }
             TapTimingAccuracy.MISSED -> {
+                missedTapsCount++
                 streakCount = 0
             }
         }
@@ -223,7 +247,7 @@ fun RhythmTrainerScreen(
     }
 
     val overallAccuracy = if (totalTapsCount > 0) {
-        ((perfectTapsCount * 1.0f + (totalTapsCount - perfectTapsCount - earlyTapsCount - lateTapsCount) * 0.5f) / totalTapsCount * 100f).coerceIn(0f, 100f)
+        ((perfectTapsCount * 1.0f + (totalTapsCount - perfectTapsCount - earlyTapsCount - lateTapsCount - missedTapsCount) * 0.5f) / totalTapsCount * 100f).coerceIn(0f, 100f)
     } else 100f
 
     Column(

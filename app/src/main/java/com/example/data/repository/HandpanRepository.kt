@@ -7,6 +7,7 @@ import com.example.data.local.PracticeProgressDao
 import com.example.data.local.PracticeProgressEntity
 import com.example.data.local.toEntity
 import com.example.data.local.toDomain
+import com.example.data.local.toDomainOrNull
 import com.example.model.HandpanPattern
 import com.example.model.PatternCategory
 import com.example.model.PracticeProgress
@@ -55,7 +56,7 @@ class HandpanRepository(
      */
     val allRecordedTracks: Flow<List<com.example.audio.RecordedTrack>> = 
         recordingTrackDao.getAllRecordingTracks().map { list ->
-            list.map { it.toDomain() }
+            list.mapNotNull { it.toDomainOrNull() }
         }
 
     suspend fun getPatternById(id: String): HandpanPattern? {

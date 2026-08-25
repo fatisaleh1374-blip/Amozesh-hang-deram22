@@ -5,7 +5,7 @@ import com.example.model.NotePitchConfig
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
-class AudioAnalysisSession(
+open class AudioAnalysisSession(
     private val detector: PitchDetector = PitchDetector()
 ) {
     private data class Listener(
@@ -20,7 +20,7 @@ class AudioAnalysisSession(
     private var microphoneLease: AudioResourceCoordinator.Lease? = null
 
     @Synchronized
-    fun acquire(
+    open fun acquire(
         scaleConfig: NotePitchConfig,
         onStrike: (DetectedStrikeEvent) -> Unit,
         onPitch: (DetectedPitchResult) -> Unit = {}

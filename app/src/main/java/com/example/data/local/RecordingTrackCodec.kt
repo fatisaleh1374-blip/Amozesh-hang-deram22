@@ -10,6 +10,10 @@ import com.example.model.TimingStatus
 import org.json.JSONArray
 import org.json.JSONObject
 
+fun RecordingTrackEntity.toDomainOrNull(): RecordedTrack? = runCatching {
+    toDomain()
+}.getOrNull()
+
 fun RecordingTrackEntity.toDomain(): RecordedTrack = RecordedTrack(
     id = id,
     title = title,

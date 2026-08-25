@@ -518,7 +518,7 @@ class PracticeEngine(
     }
 
     private fun startAcousticAssessment(pattern: HandpanPattern) {
-        if (acousticEvaluator.state.value.isEnabled) return
+        if (!acousticEvaluator.state.value.isEnabled) return
         acousticEvaluator.startAssessment(
             pattern = pattern,
             scaleConfig = audioEngine.getPitchConfig(),
@@ -540,6 +540,15 @@ class PracticeEngine(
 
     fun setPracticeMode(mode: PracticeMode) {
         _uiState.update { it.copy(mode = mode) }
+    }
+
+    fun playInputNote(noteNumber: Int, accent: Boolean = false) {
+        if (_uiState.value.inputMode != PracticeInputMode.VIRTUAL_HANDPAN) return
+        audioEngine.playNote(
+            noteNumber = noteNumber,
+            accent = accent,
+            velocity = if (accent) 1.0f else 0.85f
+        )
     }
 
     fun toggleMetronome() {
