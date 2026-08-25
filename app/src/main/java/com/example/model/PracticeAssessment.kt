@@ -13,6 +13,7 @@ enum class StrikeClassification {
 /** Timing is intentionally independent from note classification. */
 enum class TimingStatus {
     EARLY,
+    EXCELLENT,
     GOOD,
     LATE,
     PERFECT,
@@ -25,6 +26,28 @@ data class TimingResult(
 ) {
     val deviationMs: Long
         get() = deviationNanos / 1_000_000L
+}
+
+data class TimingToleranceProfile(
+    val perfectWindowNanos: Long,
+    val excellentWindowNanos: Long,
+    val goodWindowNanos: Long,
+    val missWindowNanos: Long
+) {
+    init {
+        require(perfectWindowNanos >= 0L)
+        require(perfectWindowNanos <= excellentWindowNanos)
+        require(excellentWindowNanos <= goodWindowNanos)
+        require(goodWindowNanos <= missWindowNanos)
+    }
+
+    fun toTimingPolicy(): TimingPolicy = TimingPolicy(
+        earlyWindowNanos = missWindowNanos,
+        lateWindowNanos = missWindowNanos,
+        perfectWindowNanos = perfectWindowNanos,
+        excellentWindowNanos = excellentWindowNanos,
+        goodWindowNanos = goodWindowNanos
+    )
 }
 
 enum class AssessmentEventType {

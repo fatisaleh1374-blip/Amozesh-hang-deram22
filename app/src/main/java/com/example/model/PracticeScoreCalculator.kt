@@ -7,6 +7,7 @@ data class ScoreCounters(
     val missedCount: Int = 0,
     val extraCount: Int = 0,
     val perfectCount: Int = 0,
+    val excellentCount: Int = 0,
     val goodCount: Int = 0,
     val earlyCount: Int = 0,
     val lateCount: Int = 0,
@@ -36,7 +37,21 @@ data class CanonicalAssessmentMetrics(
     val falseStrikeRate: Float,
     val consistencyScore: Float,
     val confidenceScore: Float
-)
+) {
+    companion object {
+        val EMPTY = CanonicalAssessmentMetrics(
+            overallPerformance = 0f,
+            timingScore = 0f,
+            pitchScore = 0f,
+            noteAccuracy = 0f,
+            completionRate = 0f,
+            missRate = 0f,
+            falseStrikeRate = 0f,
+            consistencyScore = 100f,
+            confidenceScore = 0f
+        )
+    }
+}
 
 object PracticeScoreCalculator {
     fun calculateMetrics(
@@ -70,7 +85,8 @@ object PracticeScoreCalculator {
                 .coerceIn(0.0, 100.0).toFloat()
         }
         val detected = results.filter { it.eventType != AssessmentEventType.MISSED }
-        val confidenceScore = detected.map { it.confidence }.averageOrZero()
+        val confidenceScore = (detected.map { it.confidence }.averageOrZero() * 100f)
+            .coerceIn(0f, 100f)
         val completionRate = percentage(correct, expected.size)
         val missRate = percentage(results.count { it.eventType == AssessmentEventType.MISSED }, expected.size)
         val falseStrikeRate = percentage(results.count { it.eventType == AssessmentEventType.EXTRA }, results.size)
@@ -129,6 +145,7 @@ object PracticeScoreCalculator {
                 missedCount = missed,
                 extraCount = extra,
                 perfectCount = results.count { it.timingResult?.status == TimingStatus.PERFECT },
+                excellentCount = results.count { it.timingResult?.status == TimingStatus.EXCELLENT },
                 goodCount = results.count { it.timingResult?.status == TimingStatus.GOOD },
                 earlyCount = results.count { it.timingResult?.status == TimingStatus.EARLY },
                 lateCount = results.count { it.timingResult?.status == TimingStatus.LATE },
@@ -142,6 +159,7 @@ object PracticeScoreCalculator {
             counters.unknownCount + counters.missedCount
         val timingDenominator = counters.correctCount + counters.wrongCount + counters.unknownCount
         val timingPoints = counters.perfectCount * 100 +
+            counters.excellentCount * 90 +
             counters.goodCount * 80 +
             counters.earlyCount * 50 +
             counters.lateCount * 50 +
@@ -174,6 +192,7 @@ object PracticeScoreCalculator {
         val results = events.filter { it.eventType != AssessmentEventType.EXPECTED }
         val perfect = results.count { it.timingResult?.status == TimingStatus.PERFECT }
         val good = results.count { it.timingResult?.status == TimingStatus.GOOD }
+        val excellent = results.count { it.timingResult?.status == TimingStatus.EXCELLENT }
         val early = results.count { it.timingResult?.status == TimingStatus.EARLY }
         val late = results.count { it.timingResult?.status == TimingStatus.LATE }
         val completed = results
@@ -187,7 +206,7 @@ object PracticeScoreCalculator {
             timingAccuracy = score.timingAccuracyPercentage,
             noteAccuracy = score.noteAccuracyPercentage,
             perfectCount = perfect,
-            greatCount = 0,
+            greatCount = excellent,
             goodCount = good,
             earlyCount = early,
             lateCount = late,

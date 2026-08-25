@@ -7,11 +7,72 @@ import com.example.model.AssessmentTimeline
 import com.example.model.AssessmentTimelineEvent
 import com.example.model.TimingResult
 import com.example.model.TimingStatus
+import com.example.model.AssessmentWeightProfile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PracticeScoreCalculatorTest {
+    @Test
+    fun configurableTimingProfileClassifiesExcellentBoundary() {
+        val policy = com.example.model.TimingToleranceProfile(
+            perfectWindowNanos = 20_000_000L,
+            excellentWindowNanos = 40_000_000L,
+            goodWindowNanos = 80_000_000L,
+            missWindowNanos = 160_000_000L
+        ).toTimingPolicy()
+        val decision = com.example.model.MusicalTargetMatcher().classify(
+            candidate = com.example.model.MusicalTarget(
+                com.example.model.MusicalTargetIdentity(
+                    sessionId = "session",
+                    patternId = "pattern",
+                    loopId = "loop",
+                    sequenceIndex = 0,
+                    targetId = "target",
+                    beatIndex = 0,
+                    subdivisionIndex = 0,
+                    expectedTimestampNanos = 1_000_000_000L,
+                    expectedNotes = setOf(0),
+                    chordId = "target"
+                )
+            ),
+            event = com.example.model.DetectedStrikeEvent(
+                id = "strike",
+                sessionId = "session",
+                monotonicTimestampNanos = 1_035_000_000L,
+                detectedFrequencyHz = 146.83f,
+                detectedNoteName = "D3",
+                detectedCentsOffset = 0,
+                detectedNote = 0,
+                matchedPitchDiffHz = 0f,
+                pitchConfidence = 1f,
+                onsetStrength = 1f,
+                energy = 1f,
+                pitchValid = true
+            ),
+            policy = policy
+        )
+
+        assertEquals(TimingStatus.EXCELLENT, decision.timing?.status)
+    }
+
+    @Test
+    fun canonicalMetricsPenalizeLowConfidenceWithoutChangingNoteCorrectness() {
+        val high = event("high", AssessmentEventType.CORRECT).copy(confidence = 1f)
+        val low = event("low", AssessmentEventType.CORRECT).copy(confidence = 0.2f)
+        val highMetrics = PracticeScoreCalculator.calculateMetrics(
+            listOf(event("expected-high", AssessmentEventType.EXPECTED), high),
+            AssessmentWeightProfile(confidence = 1f, timing = 0f, noteAccuracy = 0f, completion = 0f, consistency = 0f)
+        )
+        val lowMetrics = PracticeScoreCalculator.calculateMetrics(
+            listOf(event("expected-low", AssessmentEventType.EXPECTED), low),
+            AssessmentWeightProfile(confidence = 1f, timing = 0f, noteAccuracy = 0f, completion = 0f, consistency = 0f)
+        )
+
+        assertEquals(100f, highMetrics.noteAccuracy, 0.001f)
+        assertEquals(20f, lowMetrics.confidenceScore, 0.001f)
+        assertTrue(highMetrics.overallPerformance > lowMetrics.overallPerformance)
+    }
     @Test
     fun emptySessionStartsAtZero() {
         val score = PracticeScoreCalculator.calculate(ScoreCounters())

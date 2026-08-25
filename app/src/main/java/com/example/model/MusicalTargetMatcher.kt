@@ -31,11 +31,14 @@ data class TimingPolicy(
     val earlyWindowNanos: Long = 160_000_000L,
     val lateWindowNanos: Long = 160_000_000L,
     val perfectWindowNanos: Long = 45_000_000L,
-    val goodWindowNanos: Long = 90_000_000L
+    val goodWindowNanos: Long = 90_000_000L,
+    val excellentWindowNanos: Long = goodWindowNanos
 ) {
     init {
         require(perfectWindowNanos >= 0)
         require(goodWindowNanos >= perfectWindowNanos)
+        require(excellentWindowNanos >= perfectWindowNanos)
+        require(goodWindowNanos >= excellentWindowNanos)
         require(earlyWindowNanos >= goodWindowNanos)
         require(lateWindowNanos >= goodWindowNanos)
     }
@@ -116,6 +119,7 @@ class MusicalTargetMatcher {
     private fun timingFor(deviationNanos: Long, policy: TimingPolicy): TimingResult {
         val status = when {
             abs(deviationNanos) <= policy.perfectWindowNanos -> TimingStatus.PERFECT
+            abs(deviationNanos) <= policy.excellentWindowNanos -> TimingStatus.EXCELLENT
             abs(deviationNanos) <= policy.goodWindowNanos -> TimingStatus.GOOD
             deviationNanos < 0 -> TimingStatus.EARLY
             deviationNanos <= policy.lateWindowNanos -> TimingStatus.LATE

@@ -18,6 +18,7 @@ import com.example.model.TargetRegistry
 import com.example.model.TimingPolicy
 import com.example.model.TargetMatchType
 import com.example.model.MusicalTarget
+import com.example.model.CanonicalAssessmentMetrics
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +27,7 @@ import kotlin.math.abs
 
 enum class StrikeAccuracyStatus {
     PERFECT,    // ±45ms + correct pitch
+    EXCELLENT,  // Configured excellent timing window + correct pitch
     GOOD,       // ±90ms + correct pitch
     EARLY,      // -160ms to -90ms
     LATE,       // +90ms to +160ms
@@ -47,6 +49,7 @@ enum class MicrophoneState {
 
 enum class TimingAccuracyStatus {
     PERFECT,
+    EXCELLENT,
     GOOD,
     EARLY,
     LATE,
@@ -76,6 +79,7 @@ data class StrikeFeedback(
     val noteCorrect: Boolean,
     val classification: StrikeClassification = when (status) {
         StrikeAccuracyStatus.PERFECT,
+        StrikeAccuracyStatus.EXCELLENT,
         StrikeAccuracyStatus.GOOD,
         StrikeAccuracyStatus.EARLY,
         StrikeAccuracyStatus.LATE -> StrikeClassification.CORRECT_NOTE
@@ -90,6 +94,7 @@ data class StrikeFeedback(
         TimingResult(
             status = when (timingStatus) {
                 TimingAccuracyStatus.PERFECT -> TimingStatus.PERFECT
+                TimingAccuracyStatus.EXCELLENT -> TimingStatus.EXCELLENT
                 TimingAccuracyStatus.GOOD -> TimingStatus.GOOD
                 TimingAccuracyStatus.EARLY -> TimingStatus.EARLY
                 TimingAccuracyStatus.LATE -> TimingStatus.LATE
@@ -112,6 +117,7 @@ data class AcousticAssessmentState(
     val totalExpectedNotes: Int = 0,
     val totalStrikesEvaluated: Int = 0,
     val perfectCount: Int = 0,
+    val excellentCount: Int = 0,
     val goodCount: Int = 0,
     val earlyCount: Int = 0,
     val lateCount: Int = 0,
@@ -128,7 +134,8 @@ data class AcousticAssessmentState(
     val consistencyPercentage: Float = 100f,
     val isSummaryDialogVisible: Boolean = false,
     val microphoneState: MicrophoneState = MicrophoneState.MIC_IDLE,
-    val assessmentActive: Boolean = false
+    val assessmentActive: Boolean = false,
+    val canonicalMetrics: CanonicalAssessmentMetrics = CanonicalAssessmentMetrics.EMPTY
 ) {
     val isActive: Boolean
         get() = isEnabled && assessmentActive
@@ -342,6 +349,7 @@ class AcousticPracticeEvaluator(
                 totalExpectedNotes = 0,
                 totalStrikesEvaluated = 0,
                 perfectCount = 0,
+                excellentCount = 0,
                 goodCount = 0,
                 earlyCount = 0,
                 lateCount = 0,
@@ -354,6 +362,7 @@ class AcousticPracticeEvaluator(
                 noteAccuracyPercentage = 0f,
                 accuracyPercentage = 0f,
                 averageTimingDeviationMs = 0f,
+                canonicalMetrics = CanonicalAssessmentMetrics.EMPTY,
                 lastFeedback = null,
                 isSummaryDialogVisible = false
             )
@@ -397,7 +406,12 @@ class AcousticPracticeEvaluator(
                 )
             )
         }
-        _state.update { it.copy(totalExpectedNotes = it.totalExpectedNotes + target.identity.expectedNotes.size) }
+        _state.update {
+            it.copy(
+                totalExpectedNotes = it.totalExpectedNotes + target.identity.expectedNotes.size,
+                canonicalMetrics = PracticeScoreCalculator.calculateMetrics(timeline.snapshot())
+            )
+        }
     }
 
     @Synchronized
@@ -465,6 +479,7 @@ class AcousticPracticeEvaluator(
 
         val eventType = when (status) {
             StrikeAccuracyStatus.PERFECT,
+            StrikeAccuracyStatus.EXCELLENT,
             StrikeAccuracyStatus.GOOD,
             StrikeAccuracyStatus.EARLY,
             StrikeAccuracyStatus.LATE -> AssessmentEventType.CORRECT
@@ -486,7 +501,14 @@ class AcousticPracticeEvaluator(
                 detectedTimestampNanos = strikeTimestampNanos,
                 deviationNanos = if (isWithinTargetWindow) deviationNanos else null,
                 timingResult = feedback.timingResult,
-                confidence = event.pitchConfidence,
+                confidence = event.pitchConfidence
+                    .let { pitch ->
+                        if (event.signalQuality > 0f) {
+                            (pitch * event.signalQuality).coerceIn(0f, 1f)
+                        } else {
+                            pitch
+                        }
+                    },
                 targetId = decision.target.identity.targetId,
                 source = event.source,
                 durationNanos = event.durationNanos,
@@ -594,7 +616,8 @@ class AcousticPracticeEvaluator(
                 noteAccuracyPercentage = score.noteAccuracyPercentage,
                 accuracyPercentage = score.overallAccuracyPercentage,
                 consistencyPercentage = calculateConsistency(),
-                lastFeedback = feedback
+                lastFeedback = feedback,
+                canonicalMetrics = PracticeScoreCalculator.calculateMetrics(timeline.snapshot())
             )
         }
     }
@@ -637,7 +660,8 @@ class AcousticPracticeEvaluator(
             it.copy(
                 totalStrikesEvaluated = it.totalStrikesEvaluated + 1,
                 extraStrikeCount = it.extraStrikeCount + 1,
-                lastFeedback = feedback
+                lastFeedback = feedback,
+                canonicalMetrics = PracticeScoreCalculator.calculateMetrics(timeline.snapshot())
             )
         }
     }
@@ -645,6 +669,7 @@ class AcousticPracticeEvaluator(
     private fun updateStatsWithFeedback(feedback: StrikeFeedback, isPitchMatch: Boolean, absDeviation: Long) {
         _state.update { current ->
             var perfect = current.perfectCount
+            var excellent = current.excellentCount
             var good = current.goodCount
             var early = current.earlyCount
             var late = current.lateCount
@@ -654,6 +679,7 @@ class AcousticPracticeEvaluator(
 
             when (feedback.status) {
                 StrikeAccuracyStatus.PERFECT -> perfect++
+                StrikeAccuracyStatus.EXCELLENT -> excellent++
                 StrikeAccuracyStatus.GOOD -> good++
                 StrikeAccuracyStatus.EARLY -> early++
                 StrikeAccuracyStatus.LATE -> late++
@@ -676,6 +702,7 @@ class AcousticPracticeEvaluator(
             current.copy(
                 totalStrikesEvaluated = totalEvaluated,
                 perfectCount = perfect,
+                excellentCount = excellent,
                 goodCount = good,
                 earlyCount = early,
                 lateCount = late,
@@ -687,7 +714,8 @@ class AcousticPracticeEvaluator(
                 accuracyPercentage = score.overallAccuracyPercentage,
                 consistencyPercentage = calculateConsistency(absDeviation),
                 averageTimingDeviationMs = avgDeviation,
-                lastFeedback = feedback
+                lastFeedback = feedback,
+                canonicalMetrics = PracticeScoreCalculator.calculateMetrics(timeline.snapshot())
             )
         }
     }
@@ -707,6 +735,7 @@ class AcousticPracticeEvaluator(
 
     private fun timingPoints(status: TimingAccuracyStatus): Int = when (status) {
         TimingAccuracyStatus.PERFECT -> 100
+        TimingAccuracyStatus.EXCELLENT -> 90
         TimingAccuracyStatus.GOOD -> 80
         TimingAccuracyStatus.EARLY, TimingAccuracyStatus.LATE -> 50
         TimingAccuracyStatus.MISSED, TimingAccuracyStatus.UNKNOWN -> 0
