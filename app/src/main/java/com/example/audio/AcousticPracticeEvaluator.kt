@@ -19,6 +19,7 @@ import com.example.model.TimingPolicy
 import com.example.model.TargetMatchType
 import com.example.model.MusicalTarget
 import com.example.model.CanonicalAssessmentMetrics
+import com.example.model.AssessmentSessionValidity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -516,7 +517,19 @@ class AcousticPracticeEvaluator(
                 assessmentSessionId = decision.target.identity.sessionId,
                 patternId = decision.target.identity.patternId,
                 obligationId = "${decision.target.identity.targetId}-${event.detectedNote ?: expectedNoteNumbers.firstOrNull()}",
-                expectedNotes = decision.target.identity.expectedNotes
+                expectedNotes = decision.target.identity.expectedNotes,
+                measuredAmplitude = event.onsetStrength.coerceIn(0f, 1f),
+                measuredVelocity = event.energy.coerceIn(0f, 1f),
+                accentStrength = event.onsetStrength.coerceIn(0f, 1f),
+                expectedTechnique = expectedNoteNumbers.firstOrNull()?.toTechnique(),
+                detectedTechnique = event.detectedNote?.toTechnique(),
+                targetNoteId = "${decision.target.identity.targetId}-${event.detectedNote ?: expectedNoteNumbers.firstOrNull()}",
+                subdivision = decision.target.identity.subdivisionIndex.toSubdivision(),
+                beatPosition = decision.target.identity.beatIndex.toDouble() +
+                    decision.target.identity.subdivisionIndex.toSubdivisionFraction(),
+                expectedTimingWindow = timingPolicy.toToleranceProfile(),
+                targetBpm = (60_000_000_000L / beatDurationNanos).toInt(),
+                sessionValidity = AssessmentSessionValidity.VALID
             )
         )
 
@@ -740,4 +753,30 @@ class AcousticPracticeEvaluator(
         TimingAccuracyStatus.EARLY, TimingAccuracyStatus.LATE -> 50
         TimingAccuracyStatus.MISSED, TimingAccuracyStatus.UNKNOWN -> 0
     }
+
+    private fun Int.toTechnique(): com.example.model.HandpanTechnique = when (this) {
+        com.example.model.NotePitchConfig.NOTE_DING -> com.example.model.HandpanTechnique.DING
+        com.example.model.NotePitchConfig.NOTE_SLAP -> com.example.model.HandpanTechnique.SLAP
+        else -> com.example.model.HandpanTechnique.TONE
+    }
+
+    private fun Int.toSubdivision(): com.example.model.Subdivision = when {
+        this == 0 -> com.example.model.Subdivision.QUARTER
+        this % 8 == 0 -> com.example.model.Subdivision.EIGHTH
+        this % 4 == 0 -> com.example.model.Subdivision.SIXTEENTH
+        else -> com.example.model.Subdivision.TRIPLET
+    }
+
+    private fun Int.toSubdivisionFraction(): Double = when {
+        this == 0 -> 0.0
+        else -> this.toDouble() / 16.0
+    }
+
+    private fun TimingPolicy.toToleranceProfile(): com.example.model.TimingToleranceProfile =
+        com.example.model.TimingToleranceProfile(
+            perfectWindowNanos = perfectWindowNanos,
+            excellentWindowNanos = excellentWindowNanos,
+            goodWindowNanos = goodWindowNanos,
+            missWindowNanos = maxOf(earlyWindowNanos, lateWindowNanos)
+        )
 }

@@ -14,12 +14,14 @@ enum class LearningSkill {
 data class SkillEvidence(
     val performanceScore: Float,
     val confidence: Float,
-    val sampleCount: Int = 1
+    val sampleCount: Int = 1,
+    val validity: AssessmentSessionValidity = AssessmentSessionValidity.VALID
 ) {
     init {
         require(performanceScore in 0f..100f)
         require(confidence in 0f..100f)
         require(sampleCount > 0)
+        require(validity == AssessmentSessionValidity.VALID)
     }
 }
 
@@ -44,16 +46,8 @@ data class MasteredSkillState(
 }
 
 object MasteredSkillUpdater {
-    fun evidenceFrom(metrics: CanonicalAssessmentMetrics): Map<LearningSkill, SkillEvidence> = mapOf(
-        LearningSkill.NOTE_ACCURACY to evidence(metrics.noteAccuracy, metrics.confidenceScore),
-        LearningSkill.PITCH_ACCURACY to evidence(metrics.pitchScore, metrics.confidenceScore),
-        LearningSkill.TIMING to evidence(metrics.timingScore, metrics.confidenceScore),
-        LearningSkill.RHYTHM to evidence(metrics.completionRate, metrics.confidenceScore),
-        LearningSkill.CONSISTENCY to evidence(metrics.consistencyScore, metrics.confidenceScore),
-        LearningSkill.DYNAMICS to evidence(metrics.confidenceScore, metrics.confidenceScore),
-        LearningSkill.SPEED to evidence(metrics.completionRate, metrics.confidenceScore),
-        LearningSkill.TECHNIQUE to evidence(metrics.noteAccuracy, metrics.confidenceScore)
-    )
+    fun evidenceFrom(metrics: CanonicalAssessmentMetrics): Map<LearningSkill, SkillEvidence> =
+        SkillEvidenceMapper.from(metrics)
 
     fun update(
         state: MasteredSkillState,
@@ -62,6 +56,7 @@ object MasteredSkillUpdater {
         practicedEpochMs: Long? = null
     ): MasteredSkillState {
         require(learningRate in 0f..1f)
+        require(evidence.validity == AssessmentSessionValidity.VALID)
         val weightedEvidence = evidence.performanceScore * (evidence.confidence / 100f)
         val nextRecent = evidence.performanceScore
         val nextLongTerm = if (state.attemptCount == 0) {
@@ -85,6 +80,24 @@ object MasteredSkillUpdater {
             trend = (nextRecent - state.recentPerformance).coerceIn(-100f, 100f)
         )
     }
+
+    private fun evidence(score: Float, confidence: Float): SkillEvidence = SkillEvidence(
+        performanceScore = score.coerceIn(0f, 100f),
+        confidence = confidence.coerceIn(0f, 100f)
+    )
+}
+
+object SkillEvidenceMapper {
+    fun from(metrics: CanonicalAssessmentMetrics): Map<LearningSkill, SkillEvidence> = mapOf(
+        LearningSkill.NOTE_ACCURACY to evidence(metrics.noteAccuracy, metrics.confidenceScore),
+        LearningSkill.PITCH_ACCURACY to evidence(metrics.pitchScore, metrics.confidenceScore),
+        LearningSkill.TIMING to evidence(metrics.timingScore, metrics.confidenceScore),
+        LearningSkill.RHYTHM to evidence(metrics.rhythmScore, metrics.confidenceScore),
+        LearningSkill.CONSISTENCY to evidence(metrics.consistencyScore, metrics.confidenceScore),
+        LearningSkill.DYNAMICS to evidence(metrics.dynamicsScore, metrics.confidenceScore),
+        LearningSkill.SPEED to evidence(metrics.speedScore, metrics.confidenceScore),
+        LearningSkill.TECHNIQUE to evidence(metrics.techniqueScore, metrics.confidenceScore)
+    )
 
     private fun evidence(score: Float, confidence: Float): SkillEvidence = SkillEvidence(
         performanceScore = score.coerceIn(0f, 100f),

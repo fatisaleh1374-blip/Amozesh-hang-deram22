@@ -59,6 +59,14 @@ enum class AssessmentEventType {
     EXTRA
 }
 
+enum class AssessmentSessionValidity {
+    VALID,
+    INVALID_SIGNAL,
+    INVALID_DURATION,
+    INVALID_RESTART,
+    INVALID_TARGET_CONTEXT
+}
+
 data class AssessmentTimelineEvent(
     val eventId: String,
     val sessionId: String,
@@ -80,7 +88,18 @@ data class AssessmentTimelineEvent(
     val patternId: String? = null,
     val obligationId: String? = null,
     val expectedNotes: Set<Int> = expectedNote?.let { setOf(it) } ?: emptySet(),
-    val classification: StrikeClassification? = eventType.toStrikeClassification()
+    val classification: StrikeClassification? = eventType.toStrikeClassification(),
+    val measuredAmplitude: Float? = null,
+    val measuredVelocity: Float? = null,
+    val accentStrength: Float? = null,
+    val expectedTechnique: HandpanTechnique? = null,
+    val detectedTechnique: HandpanTechnique? = null,
+    val targetBpm: Int? = null,
+    val targetNoteId: String? = null,
+    val subdivision: Subdivision? = null,
+    val beatPosition: Double? = null,
+    val expectedTimingWindow: TimingToleranceProfile? = null,
+    val sessionValidity: AssessmentSessionValidity = AssessmentSessionValidity.INVALID_TARGET_CONTEXT
 )
 
 private fun AssessmentEventType.toStrikeClassification(): StrikeClassification = when (this) {

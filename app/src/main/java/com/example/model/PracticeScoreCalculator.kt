@@ -36,7 +36,11 @@ data class CanonicalAssessmentMetrics(
     val missRate: Float,
     val falseStrikeRate: Float,
     val consistencyScore: Float,
-    val confidenceScore: Float
+    val confidenceScore: Float,
+    val rhythmScore: Float = 0f,
+    val dynamicsScore: Float = 0f,
+    val speedScore: Float = 0f,
+    val techniqueScore: Float = 0f
 ) {
     companion object {
         val EMPTY = CanonicalAssessmentMetrics(
