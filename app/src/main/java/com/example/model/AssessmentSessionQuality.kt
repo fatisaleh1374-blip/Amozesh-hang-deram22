@@ -9,7 +9,10 @@ data class AssessmentSessionQuality(
     val restartCount: Int,
     val contextCompleteness: Float,
     val qualityScore: Float,
-    val validity: AssessmentSessionValidity
+    val validity: AssessmentSessionValidity,
+    val finalized: Boolean = false,
+    val activeDurationMs: Long = durationMs,
+    val validStrikeRatio: Float = if (eventCount == 0) 0f else validEventCount.toFloat() / eventCount
 ) {
     init {
         require(sessionId.isNotBlank())
@@ -20,6 +23,8 @@ data class AssessmentSessionQuality(
         require(restartCount >= 0)
         require(contextCompleteness in 0f..1f)
         require(qualityScore in 0f..100f)
+        require(activeDurationMs >= 0L)
+        require(validStrikeRatio in 0f..1f)
     }
 }
 
@@ -63,6 +68,52 @@ object AssessmentSessionValidator {
             contextCompleteness = contextCompleteness,
             qualityScore = qualityScore,
             validity = validity
+        )
+    }
+
+    fun derive(
+        session: PracticeSessionContext,
+        timeline: AssessmentTimeline
+    ): AssessmentSessionQuality {
+        val events = timeline.snapshot()
+        val sessionIds = events.map { it.sessionId }.toSet()
+        val evidenceEvents = events.filter {
+            it.eventType != AssessmentEventType.EXPECTED && it.eventType != AssessmentEventType.EXTRA
+        }
+        val validEventCount = evidenceEvents.count { it.hasCompleteTargetContext() }
+        val contextCompleteness = if (evidenceEvents.isEmpty()) 0f
+        else validEventCount.toFloat() / evidenceEvents.size
+        val signalValues = evidenceEvents.mapNotNull { it.signalQuality }
+        val signalQuality = if (signalValues.isEmpty()) 0f else signalValues.average().toFloat()
+        val validity = when {
+            !session.finalized -> AssessmentSessionValidity.INVALID_NOT_FINALIZED
+            session.restartCount > 0 -> AssessmentSessionValidity.INVALID_RESTART
+            session.activeDurationMs < MINIMUM_DURATION_MS -> AssessmentSessionValidity.INVALID_DURATION
+            signalQuality < MINIMUM_SIGNAL_QUALITY -> AssessmentSessionValidity.INVALID_SIGNAL
+            sessionIds.size != 1 || sessionIds.firstOrNull() != session.sessionId ||
+                evidenceEvents.any { it.sessionValidity != AssessmentSessionValidity.VALID } ->
+                AssessmentSessionValidity.INVALID_TARGET_CONTEXT
+            validEventCount < MINIMUM_EVIDENCE_EVENTS -> AssessmentSessionValidity.INVALID_TARGET_CONTEXT
+            else -> AssessmentSessionValidity.VALID
+        }
+        val qualityScore = (
+            (session.activeDurationMs.toFloat() / MINIMUM_DURATION_MS).coerceIn(0f, 1f) * 25f +
+                (validEventCount.toFloat() / MINIMUM_EVIDENCE_EVENTS).coerceIn(0f, 1f) * 25f +
+                signalQuality * 25f + contextCompleteness * 25f
+            ).coerceIn(0f, 100f)
+        return AssessmentSessionQuality(
+            sessionId = session.sessionId,
+            durationMs = session.elapsedDurationNanos / 1_000_000L,
+            eventCount = evidenceEvents.size,
+            validEventCount = validEventCount,
+            signalQuality = signalQuality.coerceIn(0f, 1f),
+            restartCount = session.restartCount,
+            contextCompleteness = contextCompleteness,
+            qualityScore = qualityScore,
+            validity = validity,
+            finalized = session.finalized,
+            activeDurationMs = session.activeDurationMs,
+            validStrikeRatio = if (evidenceEvents.isEmpty()) 0f else validEventCount.toFloat() / evidenceEvents.size
         )
     }
 

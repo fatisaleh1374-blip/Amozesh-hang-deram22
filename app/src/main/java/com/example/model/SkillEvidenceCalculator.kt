@@ -69,6 +69,15 @@ object SkillEvidenceCalculator {
         return calculate(timeline)
     }
 
+    fun calculateValidEvidence(
+        session: PracticeSessionContext,
+        timeline: AssessmentTimeline
+    ): CanonicalAssessmentMetrics? {
+        val quality = AssessmentSessionValidator.derive(session, timeline)
+        if (!session.finalized) return null
+        return calculateValidEvidence(timeline, quality)
+    }
+
     fun calculate(
         timeline: AssessmentTimeline,
         rawMetrics: SkillEvidenceRawMetrics = SkillEvidenceRawMetrics(),

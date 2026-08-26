@@ -4,6 +4,7 @@ import com.example.model.HandpanPattern
 import com.example.model.NoteEvent
 import com.example.model.PracticeInputMode
 import com.example.model.PracticeMode
+import com.example.model.PracticeSessionContext
 import com.example.util.HapticHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -76,6 +77,7 @@ class PracticeEngine(
     private var resumeFromBeat: Double? = null
     private var resumePhase: PracticePhase? = null
     private var practiceTimeline: PracticeTimeline? = null
+    private var sessionContext: PracticeSessionContext? = null
     private var timelineStartNanos: Long? = null
     private val deadlineScheduler = DeadlineScheduler(clock)
 
@@ -179,6 +181,7 @@ class PracticeEngine(
         pause()
         acousticEvaluator.stopAssessment(showSummary = false)
         acousticEvaluator.setPracticeRunning(false)
+        sessionContext = null
         resumeFromBeat = null
         resumePhase = null
         timelineStartNanos = null
@@ -325,7 +328,7 @@ class PracticeEngine(
                 startBar = startBar,
                 endBar = endBar,
                 timeSignature = pattern.timeSignature,
-                assessmentSessionId = "practice-${pattern.id}-$sessionStartedNanos",
+                        assessmentSessionId = sessionContext?.sessionId ?: "practice-${pattern.id}-$sessionStartedNanos",
                 patternId = pattern.id,
                 loopIndex = currentLoopIteration,
                 scheduleStartTimestampNanos = loopStartNanos,
@@ -435,6 +438,7 @@ class PracticeEngine(
             if (!currentState.isLoopEnabled && endBar == pattern.bars) {
                 playbackJob = null
                 acousticEvaluator.stopAssessment(showSummary = true)
+                sessionContext = null
                 _uiState.update {
                     it.copy(
                         phase = PracticePhase.COMPLETED,
@@ -519,7 +523,12 @@ class PracticeEngine(
 
     private fun startAcousticAssessment(pattern: HandpanPattern) {
         if (!acousticEvaluator.state.value.isEnabled) return
+        val context = sessionContext ?: PracticeSessionContext.start(
+            patternId = pattern.id,
+            startTimestampNanos = clock.nowNanos()
+        ).also { sessionContext = it }
         acousticEvaluator.startAssessment(
+            context = context,
             pattern = pattern,
             scaleConfig = audioEngine.getPitchConfig(),
             bpm = _uiState.value.effectiveBpm

@@ -64,8 +64,94 @@ enum class AssessmentSessionValidity {
     INVALID_SIGNAL,
     INVALID_DURATION,
     INVALID_RESTART,
-    INVALID_TARGET_CONTEXT
+    INVALID_TARGET_CONTEXT,
+    INVALID_NOT_FINALIZED
 }
+
+enum class PracticeSessionLifecycle {
+    ACTIVE,
+    PAUSED,
+    FINALIZED
+}
+
+class PracticeSessionContext private constructor(
+    val sessionId: String,
+    val patternId: String,
+    val startTimestampNanos: Long,
+    val restartCount: Int = 0
+) {
+    var endTimestampNanos: Long? = null
+        private set
+    var lifecycle: PracticeSessionLifecycle = PracticeSessionLifecycle.ACTIVE
+        private set
+    var accumulatedPausedDurationNanos: Long = 0L
+        private set
+    private var pauseStartedTimestampNanos: Long? = null
+
+    val finalized: Boolean
+        get() = lifecycle == PracticeSessionLifecycle.FINALIZED
+
+    val elapsedDurationNanos: Long
+        get() = ((endTimestampNanos ?: startTimestampNanos) - startTimestampNanos).coerceAtLeast(0L)
+
+    val activeDurationNanos: Long
+        get() = (elapsedDurationNanos - accumulatedPausedDurationNanos - openPauseDuration()).coerceAtLeast(0L)
+
+    val activeDurationMs: Long
+        get() = activeDurationNanos / 1_000_000L
+
+    fun pause(timestampNanos: Long) {
+        if (lifecycle != PracticeSessionLifecycle.ACTIVE) return
+        pauseStartedTimestampNanos = timestampNanos.coerceAtLeast(startTimestampNanos)
+        lifecycle = PracticeSessionLifecycle.PAUSED
+    }
+
+    fun resume(timestampNanos: Long) {
+        if (lifecycle != PracticeSessionLifecycle.PAUSED) return
+        val pauseStarted = pauseStartedTimestampNanos ?: timestampNanos
+        accumulatedPausedDurationNanos += (timestampNanos - pauseStarted).coerceAtLeast(0L)
+        pauseStartedTimestampNanos = null
+        lifecycle = PracticeSessionLifecycle.ACTIVE
+    }
+
+    fun finalize(timestampNanos: Long) {
+        if (finalized) return
+        val end = timestampNanos.coerceAtLeast(startTimestampNanos)
+        if (lifecycle == PracticeSessionLifecycle.PAUSED) {
+            val pauseStarted = pauseStartedTimestampNanos ?: end
+            accumulatedPausedDurationNanos += (end - pauseStarted).coerceAtLeast(0L)
+            pauseStartedTimestampNanos = null
+        }
+        endTimestampNanos = end
+        lifecycle = PracticeSessionLifecycle.FINALIZED
+    }
+
+    private fun openPauseDuration(): Long {
+        val pauseStarted = pauseStartedTimestampNanos ?: return 0L
+        val end = endTimestampNanos ?: startTimestampNanos
+        return (end - pauseStarted).coerceAtLeast(0L)
+    }
+
+    companion object {
+        fun start(
+            patternId: String,
+            startTimestampNanos: Long,
+            restartCount: Int = 0,
+            sessionId: String = "practice-$patternId-$startTimestampNanos"
+        ): PracticeSessionContext {
+            require(patternId.isNotBlank())
+            require(sessionId.isNotBlank())
+            require(startTimestampNanos >= 0L)
+            require(restartCount >= 0)
+            return PracticeSessionContext(sessionId, patternId, startTimestampNanos, restartCount)
+        }
+    }
+}
+
+data class AssessmentSessionSummary(
+    val session: PracticeSessionContext,
+    val quality: AssessmentSessionQuality
+)
 
 data class AssessmentTimelineEvent(
     val eventId: String,
@@ -99,7 +185,8 @@ data class AssessmentTimelineEvent(
     val subdivision: Subdivision? = null,
     val beatPosition: Double? = null,
     val expectedTimingWindow: TimingToleranceProfile? = null,
-    val sessionValidity: AssessmentSessionValidity = AssessmentSessionValidity.INVALID_TARGET_CONTEXT
+    val sessionValidity: AssessmentSessionValidity = AssessmentSessionValidity.INVALID_TARGET_CONTEXT,
+    val signalQuality: Float? = null
 )
 
 private fun AssessmentEventType.toStrikeClassification(): StrikeClassification = when (this) {
@@ -111,7 +198,9 @@ private fun AssessmentEventType.toStrikeClassification(): StrikeClassification =
     AssessmentEventType.EXTRA -> StrikeClassification.EXTRA_STRIKE
 }
 
-class AssessmentTimeline {
+class AssessmentTimeline(
+    private var canonicalSessionId: String? = null
+) {
     private val events = mutableListOf<AssessmentTimelineEvent>()
     private val listeners = mutableListOf<(AssessmentTimelineEvent) -> Unit>()
 
@@ -120,6 +209,7 @@ class AssessmentTimeline {
         require(event.eventId.isNotBlank()) { "Timeline event ID must not be blank" }
         require(event.sessionId.isNotBlank()) { "Timeline session ID must not be blank" }
         require(event.confidence in 0f..1f) { "Timeline confidence must be between 0 and 1" }
+        canonicalSessionId?.let { require(event.sessionId == it) { "Timeline event belongs to another session" } }
         require(events.none { it.eventId == event.eventId }) {
             "Duplicate timeline event ID: ${event.eventId}"
         }
@@ -129,11 +219,19 @@ class AssessmentTimeline {
     }
 
     @Synchronized
+    fun bindToSession(sessionId: String) {
+        require(sessionId.isNotBlank())
+        require(events.all { it.sessionId == sessionId }) { "Timeline already contains another session" }
+        canonicalSessionId = sessionId
+    }
+
+    @Synchronized
     fun snapshot(): List<AssessmentTimelineEvent> = events.toList()
 
     @Synchronized
     fun clear() {
         events.clear()
+        canonicalSessionId = null
     }
 
     @Synchronized

@@ -20,6 +20,9 @@ import com.example.model.TargetMatchType
 import com.example.model.MusicalTarget
 import com.example.model.CanonicalAssessmentMetrics
 import com.example.model.AssessmentSessionValidity
+import com.example.model.AssessmentSessionSummary
+import com.example.model.PracticeSessionContext
+import com.example.model.AssessmentSessionValidator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -177,6 +180,9 @@ class AcousticPracticeEvaluator(
     private var timingPolicy = TimingPolicy()
     private var analysisSubscription: AudioAnalysisSession.Subscription? = null
     private var assessmentSessionId: String = ""
+    private var sessionContext: PracticeSessionContext? = null
+    var finalSummary: AssessmentSessionSummary? = null
+        private set
     @Volatile
     private var practiceRunning: Boolean = false
     private val targetMatcher = MusicalTargetMatcher()
@@ -199,15 +205,32 @@ class AcousticPracticeEvaluator(
     }
 
     fun startAssessment(pattern: HandpanPattern, scaleConfig: NotePitchConfig, bpm: Int = pattern.bpm) {
+        startAssessment(
+            PracticeSessionContext.start(pattern.id, clock.nowNanos()),
+            pattern,
+            scaleConfig,
+            bpm
+        )
+    }
+
+    fun startAssessment(
+        context: PracticeSessionContext,
+        pattern: HandpanPattern,
+        scaleConfig: NotePitchConfig,
+        bpm: Int = pattern.bpm
+    ) {
         this.scaleConfig = scaleConfig
-        assessmentSessionId = "assessment-${pattern.id}-${clock.nowNanos()}"
+        sessionContext = context
+        assessmentSessionId = context.sessionId
         targetRegistry.clear()
         timeline.clear()
+        timeline.bindToSession(context.sessionId)
         beatDurationNanos = MusicalTiming.beatDurationNanos(bpm)
         resetStats()
         practiceRunning = true
 
-        assessmentStartTimestampNanos = clock.nowNanos()
+        assessmentStartTimestampNanos = context.startTimestampNanos
+        finalSummary = null
         _state.update {
             it.copy(
                 isEnabled = true,
@@ -227,6 +250,7 @@ class AcousticPracticeEvaluator(
 
     fun pauseAssessment() {
         if (!_state.value.isEnabled) return
+        sessionContext?.pause(clock.nowNanos())
         analysisSubscription?.close()
         analysisSubscription = null
         _state.update { it.copy(isListening = false, microphoneState = MicrophoneState.MIC_PAUSED) }
@@ -234,11 +258,13 @@ class AcousticPracticeEvaluator(
 
     fun resumeAssessment() {
         if (!_state.value.isEnabled || _state.value.isListening) return
+        sessionContext?.resume(clock.nowNanos())
         attachAnalysisSubscription()
     }
 
     private fun attachAnalysisSubscription() {
         analysisSubscription?.close()
+        analysisSession.bindSessionId(assessmentSessionId)
         analysisSubscription = analysisSession.acquire(
             scaleConfig = scaleConfig,
             onPitch = { pitch ->
@@ -301,6 +327,10 @@ class AcousticPracticeEvaluator(
         // Ending a session closes every still-pending target; there will be no later strike
         // or expected slice to advance the evaluator past its miss window.
         finalizePendingEvents()
+        sessionContext?.finalize(clock.nowNanos())
+        sessionContext?.let {
+            finalSummary = AssessmentSessionSummary(it, AssessmentSessionValidator.derive(it, timeline))
+        }
         analysisSubscription?.close()
         analysisSubscription = null
         _state.update {
@@ -378,6 +408,7 @@ class AcousticPracticeEvaluator(
         if (!_state.value.isEnabled) return
         if (assessmentSessionId != target.identity.sessionId) {
             assessmentSessionId = target.identity.sessionId
+            timeline.bindToSession(assessmentSessionId)
         }
         expirePendingEvents(clock.nowNanos())
         targetRegistry.register(target)
@@ -529,7 +560,8 @@ class AcousticPracticeEvaluator(
                     decision.target.identity.subdivisionIndex.toSubdivisionFraction(),
                 expectedTimingWindow = timingPolicy.toToleranceProfile(),
                 targetBpm = (60_000_000_000L / beatDurationNanos).toInt(),
-                sessionValidity = AssessmentSessionValidity.VALID
+                sessionValidity = AssessmentSessionValidity.VALID,
+                signalQuality = event.signalQuality
             )
         )
 

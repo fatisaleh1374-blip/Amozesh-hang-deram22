@@ -22,11 +22,196 @@ import com.example.model.AssessmentSessionValidator
 import com.example.model.SessionHistoryProvider
 import com.example.model.Subdivision
 import com.example.model.TimingToleranceProfile
+import com.example.model.DetectedStrikeEvent
+import com.example.model.NotePitchConfig
+import com.example.model.PracticeSession
+import com.example.audio.PracticeClock
+import com.example.model.PracticeSessionContext
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LearningEngineTest {
+    @Test
+    fun canonicalSessionIdMustRemainStableAcrossAssessmentPipeline() {
+        val evaluator = com.example.audio.AcousticPracticeEvaluator(clock = PracticeClock.Default)
+        val pattern = com.example.model.HandpanPattern(
+            id = "canonical-pattern",
+            title = "canonical",
+            description = "canonical",
+            events = listOf(com.example.model.NoteEvent(0, 0.0))
+        )
+
+        evaluator.startAssessment(pattern, NotePitchConfig.D_KURD_9)
+        val evaluatorSessionId = evaluator.assessmentSessionIdForTesting
+        val target = com.example.audio.PatternScheduler.buildSchedule(
+            events = pattern.events,
+            beatsPerBar = 4,
+            totalBars = 1,
+            assessmentSessionId = evaluatorSessionId,
+            patternId = pattern.id
+        ).first { it.target != null }.target!!
+        evaluator.notifyExpectedTarget(target)
+
+        assertEquals(evaluatorSessionId, target.identity.sessionId)
+    }
+
+    @Test
+    fun mixedSessionIdsMustInvalidateAssessment() {
+        val timeline = AssessmentTimeline()
+        timeline.append(contextualEvent(eventId = "session-a", sessionId = "session-A"))
+        timeline.append(contextualEvent(eventId = "session-b", sessionId = "session-B"))
+
+        val quality = AssessmentSessionValidator.validate(timeline, 2_000L, 0.9f, 0)
+
+        assertNull(SkillEvidenceCalculator.calculateValidEvidence(timeline, quality))
+    }
+
+    @Test
+    fun assessmentSessionMustProduceDeterministicDuration() {
+        val session = PracticeSessionContext.start("pattern", 1_000_000_000L)
+        session.finalize(4_500_000_000L)
+
+        assertEquals(3_500L, session.activeDurationMs)
+    }
+
+    @Test
+    fun pausedTimeMustNotCountTowardActiveAssessmentDuration() {
+        val session = PracticeSessionContext.start("pattern", 0L)
+        session.pause(2_000_000_000L)
+        session.resume(5_000_000_000L)
+        session.finalize(6_500_000_000L)
+
+        assertEquals(3_500L, session.activeDurationMs)
+    }
+
+    @Test
+    fun naturalCompletionAndManualStopMustProduceEquivalentFinalization() {
+        val session = PracticeSessionContext.start("pattern", 0L)
+        session.finalize(2_000_000_000L)
+
+        assertTrue(session.finalized)
+    }
+
+    @Test
+    fun restartMustCreateNewAssessmentSession() {
+        val sessionA = PracticeSessionContext.start("pattern", 1_000_000_000L)
+        val sessionB = PracticeSessionContext.start("pattern", 1_000_000_001L, restartCount = 1)
+
+        assertNotEquals(sessionA.sessionId, sessionB.sessionId)
+        assertEquals(1, sessionB.restartCount)
+    }
+
+    @Test
+    fun restartMustBeTrackedForSessionValidity() {
+        val session = PracticeSessionContext.start("pattern", 0L, restartCount = 1)
+        session.finalize(2_000_000_000L)
+        val quality = AssessmentSessionValidator.derive(session, contextualTimeline(2, sessionId = session.sessionId))
+
+        assertEquals(AssessmentSessionValidity.INVALID_RESTART, quality.validity)
+    }
+
+    @Test
+    fun emptyAssessmentSessionMustNotProduceValidSkillEvidence() {
+        val timeline = AssessmentTimeline()
+        val quality = AssessmentSessionValidator.validate(timeline, 2_000L, 0.9f, 0)
+
+        assertNull(SkillEvidenceCalculator.calculateValidEvidence(timeline, quality))
+    }
+
+    @Test
+    fun sessionSignalQualityMustAggregateDetectedEvents() {
+        val session = PracticeSessionContext.start("pattern-1", 0L)
+        session.finalize(2_000_000_000L)
+        val timeline = contextualTimeline(3, sessionId = session.sessionId, signalQualities = listOf(0.9f, 0.8f, 0.7f))
+        val quality = AssessmentSessionValidator.derive(session, timeline)
+
+        assertEquals(0.8f, quality.signalQuality, 0.001f)
+    }
+
+    @Test
+    fun lowSignalQualityMustInvalidateSession() {
+        val timeline = contextualTimeline(eventCount = 2)
+        val quality = AssessmentSessionValidator.validate(timeline, 2_000L, 0.4f, 0)
+
+        assertEquals(AssessmentSessionValidity.INVALID_SIGNAL, quality.validity)
+    }
+
+    @Test
+    fun insufficientEvidenceMustInvalidateSession() {
+        val timeline = AssessmentTimeline()
+        timeline.append(contextualEvent(eventId = "only-event"))
+        val quality = AssessmentSessionValidator.validate(timeline, 2_000L, 0.9f, 0)
+
+        assertEquals(AssessmentSessionValidity.INVALID_TARGET_CONTEXT, quality.validity)
+        assertNull(SkillEvidenceCalculator.calculateValidEvidence(timeline, quality))
+    }
+
+    @Test
+    fun allAssessmentEventsMustShareCanonicalSessionId() {
+        val timeline = contextualTimeline(eventCount = 2)
+        val canonicalId = timeline.snapshot().first().sessionId
+
+        assertTrue(timeline.snapshot().all { it.sessionId == canonicalId })
+    }
+
+    @Test
+    fun skillEvidenceMustAcceptOnlyFinalizedValidSession() {
+        val session = PracticeSessionContext.start("pattern-1", 0L)
+        val timeline = contextualTimeline(eventCount = 2, sessionId = session.sessionId)
+
+        assertNull(SkillEvidenceCalculator.calculateValidEvidence(session, timeline))
+        session.finalize(2_000_000_000L)
+        val finalizedQuality = AssessmentSessionValidator.derive(session, timeline)
+
+        assertTrue(finalizedQuality.validity == AssessmentSessionValidity.VALID)
+        assertNotNull(SkillEvidenceCalculator.calculateValidEvidence(timeline, finalizedQuality))
+    }
+
+    @Test
+    fun sessionDurationBoundariesAreDeterministic() {
+        val zero = PracticeSessionContext.start("pattern", 1_000L)
+        zero.finalize(1_000L)
+        val exact = PracticeSessionContext.start("pattern", 0L)
+        exact.finalize(1_000_000_000L)
+        val short = PracticeSessionContext.start("pattern", 0L)
+        short.finalize(999_000_000L)
+
+        assertEquals(0L, zero.activeDurationMs)
+        assertEquals(1_000L, exact.activeDurationMs)
+        assertEquals(999L, short.activeDurationMs)
+    }
+
+    @Test
+    fun multiplePauseIntervalsAndRepeatedPauseAreIdempotent() {
+        val session = PracticeSessionContext.start("pattern", 0L)
+        session.pause(1_000_000_000L)
+        session.pause(2_000_000_000L)
+        session.resume(3_000_000_000L)
+        session.pause(4_000_000_000L)
+        session.resume(5_000_000_000L)
+        session.finalize(6_000_000_000L)
+
+        assertEquals(3_000L, session.activeDurationMs)
+    }
+
+    @Test
+    fun stopWhilePausedAndRepeatedFinalizeAreDeterministic() {
+        val session = PracticeSessionContext.start("pattern", 0L)
+        session.pause(2_000_000_000L)
+        session.finalize(5_000_000_000L)
+        val end = session.endTimestampNanos
+        session.finalize(9_000_000_000L)
+
+        assertEquals(2_000L, session.activeDurationMs)
+        assertEquals(end, session.endTimestampNanos)
+        assertTrue(session.finalized)
+    }
+
     @Test
     fun masteryMovesGraduallyAndConfidenceReflectsEvidence() {
         val initial = MasteredSkillState(skill = LearningSkill.TIMING)
@@ -215,6 +400,8 @@ class LearningEngineTest {
 
     private fun contextualTimeline(
         eventCount: Int,
+        sessionId: String = "session",
+        signalQualities: List<Float> = List(eventCount) { 0.8f },
         sessionValidity: AssessmentSessionValidity = AssessmentSessionValidity.VALID
     ): AssessmentTimeline {
         val timeline = AssessmentTimeline()
@@ -222,6 +409,8 @@ class LearningEngineTest {
             timeline.append(
                 contextualEvent(
                     eventId = "context-event-$index",
+                    sessionId = sessionId,
+                    signalQuality = signalQualities[index],
                     sessionValidity = sessionValidity
                 )
             )
@@ -231,6 +420,8 @@ class LearningEngineTest {
 
     private fun contextualEvent(
         eventId: String = "context-event",
+        sessionId: String = "session",
+        signalQuality: Float = 0.8f,
         sessionValidity: AssessmentSessionValidity = AssessmentSessionValidity.VALID,
         subdivision: Subdivision? = Subdivision.SIXTEENTH,
         beatPosition: Double? = 1.25,
@@ -242,7 +433,7 @@ class LearningEngineTest {
         )
     ) = AssessmentTimelineEvent(
         eventId = eventId,
-        sessionId = "session",
+        sessionId = sessionId,
         loopId = "loop-1",
         sequenceIndex = 0,
         expectedNote = 1,
@@ -265,6 +456,7 @@ class LearningEngineTest {
         expectedTimingWindow = expectedTimingWindow,
         expectedTechnique = HandpanTechnique.TONE,
         detectedTechnique = HandpanTechnique.TONE,
+        signalQuality = signalQuality,
         sessionValidity = sessionValidity
     )
 }
