@@ -15,6 +15,12 @@ The assessment pipeline is:
 
 `PracticeEngine -> PracticeSessionContext -> PatternScheduler -> MusicalTarget -> AcousticPracticeEvaluator -> AudioAnalysisSession -> DetectedStrikeEvent -> AssessmentTimeline -> AssessmentSessionQuality -> SkillEvidenceCalculator`
 
+The live microphone path also produces a deterministic `AudioFrameQuality` contract from PCM frames. It records RMS, peak, clipping ratio, noise floor, SNR, signal confidence, frame status, and monotonic capture-to-analysis timestamps. Only `VALID` frames may emit microphone strikes into assessment; silent, low-signal, noisy, overloaded, and invalid frames are excluded from successful strike evidence.
+
+Assessment finalization preserves complete target context on `MISSED` events while excluding them from valid-event counts. This lets a session with sufficient valid strikes remain assessable without treating missed notes as successful evidence.
+
+The deterministic audio benchmark covers silence, attack+sustain, repeated strikes, low/mid/high synthetic handpan-register tones, matching boundaries, and rejected quality states. The current fixture results are onset precision/recall `1.0` for silence and attack+sustain, `1.0` for four repeated strikes after warmup correction, and pitch error below `0.34` cents across 146.83 Hz, 220 Hz, and 440 Hz tones. These are synthetic PCM regression fixtures, not recordings from a physical instrument.
+
 ## Non-negotiable boundaries
 
 Do not change UI, ViewModel, Room, repository, persistence, signing, Gradle versions, dependency versions, or `AudioEngine` while working on domain session lifecycle unless a direct build requirement is demonstrated. Do not mix `PerformanceRecorder` with assessment lifecycle. Do not run destructive Git commands or `clean` without explicit authorization.

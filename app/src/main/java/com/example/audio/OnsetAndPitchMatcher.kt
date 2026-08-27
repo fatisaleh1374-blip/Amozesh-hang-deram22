@@ -25,8 +25,13 @@ class AdaptiveOnsetDetector(
     }
 
     fun process(rms: Float, previousRms: Float): OnsetDecision {
-        if (!rms.isFinite() || rms <= 0f) {
+        if (!rms.isFinite()) {
             return OnsetDecision(false, 0f, 0f, noiseFloorRms)
+        }
+
+        if (rms <= 0f) {
+            if (warmupFrames < 8) warmupFrames++
+            return decision(false, 0f)
         }
 
         val energyRise = rms - previousRms
@@ -83,7 +88,8 @@ class OnsetAndPitchMatcher(
         val energy: Float,
         val onsetSampleOffset: Int = 0,
         val onsetConfidence: Float = 0f,
-        val signalQuality: Float = 0f
+        val signalQuality: Float = 0f,
+        val noiseFloorRms: Float = 0f
     )
 
     /**
@@ -125,7 +131,8 @@ class OnsetAndPitchMatcher(
                 energy = rms,
                 onsetSampleOffset = 0,
                 onsetConfidence = 0f,
-                signalQuality = onset.signalQuality
+                signalQuality = onset.signalQuality,
+                noiseFloorRms = onset.noiseFloorRms
             )
         }
 
@@ -143,7 +150,8 @@ class OnsetAndPitchMatcher(
                 energy = rms,
                 onsetSampleOffset = onsetOffset,
                 onsetConfidence = onset.onsetConfidence,
-                signalQuality = onset.signalQuality
+                signalQuality = onset.signalQuality,
+                noiseFloorRms = onset.noiseFloorRms
             )
         }
 
@@ -160,7 +168,8 @@ class OnsetAndPitchMatcher(
             energy = rms,
             onsetSampleOffset = onsetOffset,
             onsetConfidence = onset.onsetConfidence,
-            signalQuality = onset.signalQuality
+            signalQuality = onset.signalQuality,
+            noiseFloorRms = onset.noiseFloorRms
         )
     }
 

@@ -8,6 +8,12 @@ An offline Kotlin Android handpan learning app centered on numeric handpan notat
 
 `PracticeEngine` controls playback and practice phases. `PracticeSessionContext` owns canonical session identity and monotonic lifecycle state. `PatternScheduler` creates musical targets. `AcousticPracticeEvaluator` matches microphone strikes to targets. `AudioAnalysisSession` owns detector subscriptions. `AssessmentTimeline` stores expected and detected assessment events. `AssessmentSessionValidator` derives quality. `SkillEvidenceCalculator` accepts only finalized valid session evidence through the session-based API.
 
+Assessment integrity is enforced at both boundaries: timeline events must have matching `sessionId` and `assessmentSessionId`, and the evaluator ignores detected strikes from stale sessions before target matching. This preserves restart isolation and prevents prior-session events from entering a new assessment.
+
+When pending targets are finalized as `MISSED`, their scheduler context is retained and no detected timestamp is fabricated. Missed notes affect scoring and valid-event counts but do not invalidate otherwise contextual evidence by themselves.
+
+Deterministic audio regression fixtures verify zero false positives for silence, one onset for attack+sustain, four of four repeated strikes with zero false positives/negatives, and YIN pitch errors below `0.34` cents for low, mid, and high synthetic tones. The benchmark does not replace physical-device or real-room validation.
+
 Room and repository persistence are intentionally separate from the pure assessment contract. UI and ViewModel consume state but do not own session identity.
 
 ## Completed phases

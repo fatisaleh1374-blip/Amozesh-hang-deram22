@@ -208,6 +208,9 @@ class AssessmentTimeline(
     fun append(event: AssessmentTimelineEvent): AssessmentTimelineEvent {
         require(event.eventId.isNotBlank()) { "Timeline event ID must not be blank" }
         require(event.sessionId.isNotBlank()) { "Timeline session ID must not be blank" }
+        require(event.assessmentSessionId == event.sessionId) {
+            "Timeline assessment session ID must match event session ID"
+        }
         require(event.confidence in 0f..1f) { "Timeline confidence must be between 0 and 1" }
         canonicalSessionId?.let { require(event.sessionId == it) { "Timeline event belongs to another session" } }
         require(events.none { it.eventId == event.eventId }) {
@@ -275,7 +278,8 @@ data class DetectedStrikeEvent(
     val onsetConfidence: Float = 0f,
     val signalQuality: Float = 0f,
     val source: String = "microphone",
-    val durationNanos: Long? = null
+    val durationNanos: Long? = null,
+    val audioQuality: AudioFrameQuality? = null
 )
 
 data class ExpectedNoteEvent(

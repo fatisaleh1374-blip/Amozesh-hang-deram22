@@ -450,6 +450,7 @@ class AcousticPracticeEvaluator(
     @Synchronized
     private fun handleStrikeDetected(event: DetectedStrikeEvent) {
         if (!_state.value.isEnabled || !practiceRunning) return
+        if (event.sessionId != assessmentSessionId) return
 
         if (!targetRegistry.markProcessed(event.id)) return
 
@@ -562,7 +563,7 @@ class AcousticPracticeEvaluator(
                 expectedTimingWindow = timingPolicy.toToleranceProfile(),
                 targetBpm = (60_000_000_000L / beatDurationNanos).toInt(),
                 sessionValidity = AssessmentSessionValidity.VALID,
-                signalQuality = event.signalQuality
+                signalQuality = event.audioQuality?.signalConfidence ?: event.signalQuality
             )
         )
 
@@ -579,7 +580,11 @@ class AcousticPracticeEvaluator(
                 targetId = target.identity.targetId,
                 patternId = target.identity.patternId,
                 sequenceIndex = target.identity.sequenceIndex,
-                loopId = target.identity.loopId
+                loopId = target.identity.loopId,
+                targetBpm = (60_000_000_000L / beatDurationNanos).toInt(),
+                subdivision = target.identity.subdivisionIndex.toSubdivision(),
+                beatPosition = target.identity.beatIndex.toDouble() +
+                    target.identity.subdivisionIndex.toSubdivisionFraction()
             )
         }
     }
@@ -595,7 +600,11 @@ class AcousticPracticeEvaluator(
                 targetId = target.identity.targetId,
                 patternId = target.identity.patternId,
                 sequenceIndex = target.identity.sequenceIndex,
-                loopId = target.identity.loopId
+                loopId = target.identity.loopId,
+                targetBpm = (60_000_000_000L / beatDurationNanos).toInt(),
+                subdivision = target.identity.subdivisionIndex.toSubdivision(),
+                beatPosition = target.identity.beatIndex.toDouble() +
+                    target.identity.subdivisionIndex.toSubdivisionFraction()
             )
         }
         expectedNoteEvents = emptyList()
@@ -608,7 +617,10 @@ class AcousticPracticeEvaluator(
         targetId: String? = null,
         patternId: String? = null,
         sequenceIndex: Int = -1,
-        loopId: String
+        loopId: String,
+        targetBpm: Int,
+        subdivision: com.example.model.Subdivision,
+        beatPosition: Double
     ) {
         val feedback = StrikeFeedback(
             status = StrikeAccuracyStatus.MISSED,
@@ -634,7 +646,7 @@ class AcousticPracticeEvaluator(
                     detectedNote = null,
                     eventType = AssessmentEventType.MISSED,
                     expectedTimestampNanos = expectedTimestampNanos,
-                    detectedTimestampNanos = clock.nowNanos(),
+                    detectedTimestampNanos = null,
                     deviationNanos = null,
                     timingResult = null,
                     confidence = 0f,
@@ -645,7 +657,14 @@ class AcousticPracticeEvaluator(
                     assessmentSessionId = assessmentSessionId,
                     patternId = patternId,
                     obligationId = targetId?.let { "$it-$noteNumber" },
-                    expectedNotes = expectedNotes.toSet()
+                    expectedNotes = expectedNotes.toSet(),
+                    targetNoteId = targetId?.let { "$it-$noteNumber" },
+                    subdivision = subdivision,
+                    beatPosition = beatPosition,
+                    expectedTimingWindow = timingPolicy.toToleranceProfile(),
+                    targetBpm = targetBpm,
+                    expectedTechnique = noteNumber.toTechnique(),
+                    sessionValidity = AssessmentSessionValidity.VALID
                 )
             )
         }

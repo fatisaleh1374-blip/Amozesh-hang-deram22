@@ -6,6 +6,8 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.util.Log
 import com.example.model.NotePitchConfig
+import com.example.model.AudioFrameQuality
+import com.example.model.AudioFrameQualityAnalyzer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -29,7 +31,8 @@ data class DetectedPitchResult(
     val matchedPitchDiffHz: Float,
     val confidence: Float = 0.8f,
     val onsetConfidence: Float = 0f,
-    val signalQuality: Float = 0f
+    val signalQuality: Float = 0f,
+    val audioQuality: AudioFrameQuality? = null
 )
 
 /**
@@ -101,7 +104,10 @@ class PitchDetector(
                     val readSamples = audioRecord?.read(audioBuffer, 0, audioBuffer.size) ?: 0
                     if (readSamples < BUFFER_SIZE) continue
 
-                    val nowNanos = clock.nowNanos()
+                    val frameAvailableNanos = clock.nowNanos()
+                    val captureTimestampNanos = frameAvailableNanos -
+                        (readSamples * 1_000_000_000L / SAMPLE_RATE)
+                    val analysisStartNanos = clock.nowNanos()
 
                     // Calculate RMS energy
                     var sumSquares = 0.0
@@ -112,9 +118,20 @@ class PitchDetector(
                     val rms = sqrt(sumSquares / readSamples).toFloat()
 
                     val eval = onsetMatcher.processFrame(audioBuffer, readSamples, rms, lastRms, scaleConfig)
+                    val analysisEndNanos = clock.nowNanos()
+                    val audioQuality = AudioFrameQualityAnalyzer.analyze(
+                        samples = audioBuffer,
+                        sampleCount = readSamples,
+                        sampleRateHz = SAMPLE_RATE,
+                        noiseFloorRms = eval.noiseFloorRms,
+                        captureTimestampNanos = captureTimestampNanos.coerceAtLeast(0L),
+                        analysisStartTimestampNanos = analysisStartNanos.coerceAtLeast(captureTimestampNanos),
+                        analysisEndTimestampNanos = analysisEndNanos
+                    )
 
                     // Sub-frame timestamp based on sample offset
-                    val exactStrikeTimestampNanos = nowNanos - ((readSamples - eval.onsetSampleOffset) * 1_000_000_000L / SAMPLE_RATE)
+                    val exactStrikeTimestampNanos = frameAvailableNanos -
+                        ((readSamples - eval.onsetSampleOffset).toLong() * 1_000_000_000L / SAMPLE_RATE)
 
                     val result = DetectedPitchResult(
                         frequencyHz = eval.detectedFreqHz,
@@ -125,7 +142,8 @@ class PitchDetector(
                         matchedPitchDiffHz = eval.centsDeviationFromScale,
                         confidence = eval.confidence,
                         onsetConfidence = eval.onsetConfidence,
-                        signalQuality = eval.signalQuality
+                        signalQuality = eval.signalQuality,
+                        audioQuality = audioQuality
                     )
 
                     if (eval.detectedFreqHz > 0f && listeningGeneration.get() == generation && isListening) {
@@ -139,6 +157,7 @@ class PitchDetector(
                     // Refractory window of 130ms (130,000,000 ns) for distinct strikes.
                     // Keep unpitched onsets: the evaluator must score them instead of hiding them.
                     if (eval.isStrike && listeningGeneration.get() == generation && isListening &&
+                        audioQuality.status == com.example.model.AudioFrameStatus.VALID &&
                         (exactStrikeTimestampNanos - lastStrikeTimestampNanos) > 130_000_000L
                     ) {
                         lastStrikeTimestampNanos = exactStrikeTimestampNanos
