@@ -33,6 +33,7 @@ object AssessmentSessionValidator {
     const val MINIMUM_EVIDENCE_EVENTS = 2
     const val MINIMUM_SIGNAL_QUALITY = 0.5f
 
+    @Deprecated("Use derive(session, timeline) so quality cannot be fabricated by a caller.")
     fun validate(
         timeline: AssessmentTimeline,
         durationMs: Long,
@@ -80,7 +81,9 @@ object AssessmentSessionValidator {
         val evidenceEvents = events.filter {
             it.eventType != AssessmentEventType.EXPECTED && it.eventType != AssessmentEventType.EXTRA
         }
-        val validEventCount = evidenceEvents.count { it.hasCompleteTargetContext() }
+        val validEventCount = evidenceEvents.count {
+            it.eventType != AssessmentEventType.MISSED && it.hasCompleteTargetContext()
+        }
         val contextCompleteness = if (evidenceEvents.isEmpty()) 0f
         else validEventCount.toFloat() / evidenceEvents.size
         val signalValues = evidenceEvents.mapNotNull { it.signalQuality }

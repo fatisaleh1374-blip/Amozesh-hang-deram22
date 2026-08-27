@@ -14,10 +14,9 @@ open class AudioAnalysisSession(
     )
 
     private val listeners = CopyOnWriteArrayList<Listener>()
-    private val fallbackSessionId = "audio-${System.identityHashCode(this)}"
     private val eventSequence = AtomicLong(0L)
     private var listening = false
-    private var activeSessionId: String = fallbackSessionId
+    private var activeSessionId: String? = null
     private var microphoneLease: AudioResourceCoordinator.Lease? = null
 
     internal fun bindSessionId(sessionId: String) {
@@ -25,24 +24,28 @@ open class AudioAnalysisSession(
         activeSessionId = sessionId
     }
 
+    @Deprecated("Use acquire(..., sessionId) for assessment sessions.")
     @Synchronized
     open fun acquire(
         scaleConfig: NotePitchConfig,
         onStrike: (DetectedStrikeEvent) -> Unit,
         onPitch: (DetectedPitchResult) -> Unit = {}
-    ): Subscription = acquire(scaleConfig, onStrike, onPitch, null)
+    ): Subscription {
+        val sessionId = activeSessionId ?: return Subscription({}, isActive = false)
+        return acquire(scaleConfig, onStrike, onPitch, sessionId)
+    }
 
     @Synchronized
     open fun acquire(
         scaleConfig: NotePitchConfig,
         onStrike: (DetectedStrikeEvent) -> Unit,
         onPitch: (DetectedPitchResult) -> Unit = {},
-        sessionId: String? = null
+        sessionId: String
     ): Subscription {
         val listener = Listener(onStrike, onPitch)
-        activeSessionId = sessionId ?: fallbackSessionId
+        activeSessionId = sessionId
         if (!listening) {
-            microphoneLease = AudioResourceCoordinator.tryAcquire(activeSessionId)
+            microphoneLease = AudioResourceCoordinator.tryAcquire(sessionId)
                 ?: return Subscription({}, isActive = false)
         }
         listeners += listener
@@ -52,8 +55,8 @@ open class AudioAnalysisSession(
                     scaleConfig = scaleConfig,
                     onStrikeDetected = { result, timestamp ->
                         val event = DetectedStrikeEvent(
-                            id = "$activeSessionId-${eventSequence.incrementAndGet()}",
-                            sessionId = activeSessionId,
+                            id = "$sessionId-${eventSequence.incrementAndGet()}",
+                            sessionId = sessionId,
                             monotonicTimestampNanos = timestamp,
                             detectedFrequencyHz = result.frequencyHz,
                             detectedNoteName = result.noteName,

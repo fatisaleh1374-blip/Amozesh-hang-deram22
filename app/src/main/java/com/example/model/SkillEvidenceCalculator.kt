@@ -60,6 +60,7 @@ object SkillEvidenceCalculator {
         return sessions.map { calculate(it).consistencyScore }.average().toFloat()
     }
 
+    @Deprecated("Use calculateValidEvidence(session, timeline) to derive quality from lifecycle facts.")
     fun calculateValidEvidence(
         timeline: AssessmentTimeline,
         quality: AssessmentSessionQuality

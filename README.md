@@ -38,7 +38,7 @@
 
 - **Android Studio:** Ladybug (2024.2.1) یا جدیدتر
 - **JDK:** OpenJDK 11 یا OpenJDK 17
-- **Gradle:** 8.11.1
+- **Gradle:** 9.3.1 (Gradle wrapper)
 - **Android Gradle Plugin (AGP):** 9.1.1
 - **Kotlin:** 2.2.10
 - **Min SDK:** 24 (Android 7.0)
@@ -49,9 +49,6 @@
 ## ۳. دستورات بیلد و اجرای تست‌ها
 
 ```bash
-# پاکسازی پروژه
-./gradlew clean
-
 # اجرای کلیه تست‌های واحد مهندسی، DSP و زمان‌بندی
 ./gradlew test
 
@@ -64,11 +61,20 @@ STORE_PASSWORD='...' KEY_ALIAS='...' KEY_PASSWORD='...' \
 ./gradlew assembleRelease
 ```
 
+برای اجرای headless در محیط CI یا کانتینر:
+
+```bash
+JAVA_TOOL_OPTIONS=-Djava.awt.headless=true ./gradlew test
+JAVA_TOOL_OPTIONS=-Djava.awt.headless=true ./gradlew lint
+```
+
 نسخه release در نبود keystore رسمی عمداً fail می‌شود و هرگز به debug keystore fallback نمی‌کند.
 
 ---
 
 ## ۴. ساختار معماری
+
+اصل معماری فعلی **Real Handpan First** است: مسیر میکروفن و ارزیابی ساز واقعی مسیر اصلی تمرین است و حالت مجازی فقط fallback برای تمرین بدون ساز محسوب می‌شود. Phase 3F lifecycle canonical برای session تمرین و assessment را در مرز domain و event pipeline تکمیل کرده است.
 
 ```
 app/src/main/java/com/example/

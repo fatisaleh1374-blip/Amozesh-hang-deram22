@@ -37,6 +37,65 @@ import org.junit.Test
 
 class LearningEngineTest {
     @Test
+    fun noMultipleSessionIdentityCreators() {
+        val session = PracticeSessionContext.start("pattern", 1_000L)
+        val evaluator = com.example.audio.AcousticPracticeEvaluator(clock = PracticeClock.Default)
+        val pattern = com.example.model.HandpanPattern("pattern", "title", "description", events = emptyList())
+
+        evaluator.startAssessment(session, pattern, NotePitchConfig.D_KURD_9)
+
+        assertEquals(session.sessionId, evaluator.assessmentSessionIdForTesting)
+    }
+
+    @Test
+    fun audioSessionMustUseContextId() {
+        val session = com.example.audio.AudioAnalysisSession()
+        val field = session::class.java.getDeclaredField("activeSessionId")
+        field.isAccessible = true
+        session.bindSessionId("canonical")
+
+        assertEquals("canonical", field.get(session))
+    }
+
+    @Test
+    fun evaluatorMustNotGenerateSessionId() {
+        val session = PracticeSessionContext.start("pattern", 1_000L)
+        val evaluator = com.example.audio.AcousticPracticeEvaluator(clock = PracticeClock.Default)
+        val pattern = com.example.model.HandpanPattern("pattern", "title", "description", events = emptyList())
+
+        evaluator.startAssessment(session, pattern, NotePitchConfig.D_KURD_9)
+
+        assertEquals(session.sessionId, evaluator.assessmentSessionIdForTesting)
+    }
+
+    @Test
+    fun deprecatedAssessmentApisHaveNoRuntimeCallers() {
+        val method = com.example.audio.AcousticPracticeEvaluator::class.java.getDeclaredMethod(
+            "startAssessment",
+            PracticeSessionContext::class.java,
+            com.example.model.HandpanPattern::class.java,
+            NotePitchConfig::class.java,
+            Int::class.javaPrimitiveType
+        )
+
+        assertFalse(method.isAnnotationPresent(Deprecated::class.java))
+    }
+
+    @Test
+    fun previewMustNotEnterAssessmentPipeline() {
+        val session = PracticeSessionContext.start("preview-pattern", 1_000L)
+        val target = com.example.audio.PatternScheduler.buildSchedule(
+            events = listOf(com.example.model.NoteEvent(0, 0.0)),
+            beatsPerBar = 4,
+            totalBars = 1,
+            assessmentSessionId = session.sessionId,
+            patternId = session.patternId
+        ).first { it.target != null }.target!!
+
+        assertEquals(session.sessionId, target.identity.sessionId)
+    }
+
+    @Test
     fun canonicalSessionIdMustRemainStableAcrossAssessmentPipeline() {
         val evaluator = com.example.audio.AcousticPracticeEvaluator(clock = PracticeClock.Default)
         val pattern = com.example.model.HandpanPattern(

@@ -5,6 +5,7 @@ import com.example.audio.PatternScheduler
 import com.example.model.AssessmentEventType
 import com.example.model.NoteEvent
 import com.example.model.NotePitchConfig
+import com.example.model.PracticeSessionContext
 import com.example.model.TimeSignature
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -15,13 +16,14 @@ class SchedulerEvaluatorTimelineIntegrationTest {
     fun schedulerIdentitySurvivesEvaluatorMatcherAndTimeline() {
         val clock = FakePracticeClock()
         val evaluator = AcousticPracticeEvaluator(clock = clock)
+        val session = PracticeSessionContext.start("pattern-1", clock.currentNanos)
         val events = listOf(NoteEvent(noteNumber = 0, beatPosition = 0.0))
         val target = PatternScheduler.buildSchedule(
             events = events,
             beatsPerBar = 4,
             totalBars = 1,
             timeSignature = TimeSignature.Common44,
-            assessmentSessionId = "assessment-1",
+            assessmentSessionId = session.sessionId,
             patternId = "pattern-1",
             loopIndex = 1,
             scheduleStartTimestampNanos = clock.currentNanos,
@@ -29,6 +31,7 @@ class SchedulerEvaluatorTimelineIntegrationTest {
         ).single { it.target != null }.target!!
 
         evaluator.startAssessment(
+            context = session,
             pattern = com.example.model.HandpanPattern(
                 id = "pattern-1",
                 title = "identity",
@@ -53,6 +56,7 @@ class SchedulerEvaluatorTimelineIntegrationTest {
     fun completeChordConsumesEachObligationAndPartialChordLeavesMissedTimeline() {
         val clock = FakePracticeClock()
         val evaluator = AcousticPracticeEvaluator(clock = clock)
+        val session = PracticeSessionContext.start("pattern-2", clock.currentNanos)
         val events = listOf(
             NoteEvent(noteNumber = 0, beatPosition = 0.0),
             NoteEvent(noteNumber = 1, beatPosition = 0.0)
@@ -62,13 +66,14 @@ class SchedulerEvaluatorTimelineIntegrationTest {
             beatsPerBar = 4,
             totalBars = 1,
             timeSignature = TimeSignature.Common44,
-            assessmentSessionId = "assessment-2",
+            assessmentSessionId = session.sessionId,
             patternId = "pattern-2",
             loopIndex = 0,
             scheduleStartTimestampNanos = clock.currentNanos,
             bpm = 60
         ).single { it.target != null }.target!!
         evaluator.startAssessment(
+            context = session,
             com.example.model.HandpanPattern("pattern-2", "chord", "chord", 60, events = events),
             NotePitchConfig.D_KURD_9
         )

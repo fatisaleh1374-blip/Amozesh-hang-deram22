@@ -204,12 +204,13 @@ class AcousticPracticeEvaluator(
         timingPolicy = policy
     }
 
+    @Deprecated("Use startAssessment(context, pattern, scaleConfig, bpm) for canonical session lifecycle.")
     fun startAssessment(pattern: HandpanPattern, scaleConfig: NotePitchConfig, bpm: Int = pattern.bpm) {
         startAssessment(
-            PracticeSessionContext.start(pattern.id, clock.nowNanos()),
-            pattern,
-            scaleConfig,
-            bpm
+            context = PracticeSessionContext.start(pattern.id, clock.nowNanos()),
+            pattern = pattern,
+            scaleConfig = scaleConfig,
+            bpm = bpm
         )
     }
 
@@ -279,7 +280,8 @@ class AcousticPracticeEvaluator(
             },
             onStrike = { event ->
                 handleStrikeDetected(event)
-            }
+            },
+            sessionId = assessmentSessionId
         )
         val active = analysisSubscription?.isActive == true
         _state.update {
@@ -407,8 +409,7 @@ class AcousticPracticeEvaluator(
     fun notifyExpectedTarget(target: MusicalTarget) {
         if (!_state.value.isEnabled) return
         if (assessmentSessionId != target.identity.sessionId) {
-            assessmentSessionId = target.identity.sessionId
-            timeline.bindToSession(assessmentSessionId)
+            return
         }
         expirePendingEvents(clock.nowNanos())
         targetRegistry.register(target)

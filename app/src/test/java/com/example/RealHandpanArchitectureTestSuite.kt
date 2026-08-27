@@ -47,7 +47,8 @@ private class CountingAudioAnalysisSession : com.example.audio.AudioAnalysisSess
     override fun acquire(
         scaleConfig: NotePitchConfig,
         onStrike: (DetectedStrikeEvent) -> Unit,
-        onPitch: (com.example.audio.DetectedPitchResult) -> Unit
+        onPitch: (com.example.audio.DetectedPitchResult) -> Unit,
+        sessionId: String
     ): Subscription {
         acquireCount++
         activeSubscriptions++

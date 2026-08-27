@@ -78,6 +78,7 @@ class PracticeEngine(
     private var resumePhase: PracticePhase? = null
     private var practiceTimeline: PracticeTimeline? = null
     private var sessionContext: PracticeSessionContext? = null
+    private var restartCount: Int = 0
     private var timelineStartNanos: Long? = null
     private val deadlineScheduler = DeadlineScheduler(clock)
 
@@ -111,6 +112,7 @@ class PracticeEngine(
                 totalRoundsCompleted = 0
             )
         }
+        restartCount = 0
     }
 
     fun togglePlay() {
@@ -229,6 +231,7 @@ class PracticeEngine(
     }
 
     fun restart() {
+        restartCount++
         _uiState.update { it.copy(phase = PracticePhase.RESTARTING) }
         stop()
         play()
@@ -465,7 +468,7 @@ class PracticeEngine(
             startBar = 1,
             endBar = pattern.bars,
             timeSignature = pattern.timeSignature,
-            assessmentSessionId = "preview-${pattern.id}-$sessionStartedNanos",
+            assessmentSessionId = sessionContext?.sessionId ?: "preview-only",
             patternId = pattern.id,
             scheduleStartTimestampNanos = clock.nowNanos(),
             bpm = _uiState.value.effectiveBpm
@@ -525,7 +528,8 @@ class PracticeEngine(
         if (!acousticEvaluator.state.value.isEnabled) return
         val context = sessionContext ?: PracticeSessionContext.start(
             patternId = pattern.id,
-            startTimestampNanos = clock.nowNanos()
+            startTimestampNanos = clock.nowNanos(),
+            restartCount = restartCount
         ).also { sessionContext = it }
         acousticEvaluator.startAssessment(
             context = context,
@@ -604,7 +608,7 @@ class PracticeEngine(
         acousticEvaluator.toggleEnabled()
         if (next && _uiState.value.isPlaying) {
             _uiState.value.pattern?.let {
-                acousticEvaluator.startAssessment(it, audioEngine.getPitchConfig(), _uiState.value.effectiveBpm)
+                startAcousticAssessment(it)
             }
         }
     }
@@ -616,7 +620,7 @@ class PracticeEngine(
                 acousticEvaluator.toggleEnabled()
             } else {
                 _uiState.value.pattern?.let {
-                acousticEvaluator.startAssessment(it, audioEngine.getPitchConfig(), _uiState.value.effectiveBpm)
+                startAcousticAssessment(it)
                 }
             }
         } else {
