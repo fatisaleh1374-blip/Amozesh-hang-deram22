@@ -17,6 +17,10 @@ The assessment pipeline is:
 
 The live microphone path also produces a deterministic `AudioFrameQuality` contract from PCM frames. It records RMS, peak, clipping ratio, noise floor, SNR, signal confidence, frame status, and monotonic capture-to-analysis timestamps. Only `VALID` frames may emit microphone strikes into assessment; silent, low-signal, noisy, overloaded, and invalid frames are excluded from successful strike evidence.
 
+The acoustic practice path also exposes an in-memory `AudioCalibrationSession` contract. It maps observed frame quality to `LISTENING`, `READY`, `NO_SIGNAL`, `TOO_NOISY`, `OVERLOADED`, or `FAILED`, requires three consecutive valid frames by default, rejects out-of-order capture timestamps, and supports reset for retry. This is a deterministic readiness contract; it is not physical-device calibration validation and is not persisted.
+
+Finalized valid assessments now have a durable boundary. `AcousticPracticeEvaluator` exposes a `FinalizedAssessment` only after canonical session finalization and valid evidence derivation. `HandpanRepository` persists assessment and evidence snapshots in Room keyed by `sessionId`, and projects session-derived practice progress idempotently in one transaction. Duplicate finalization of the same session is ignored; full assessment event timelines and active sessions remain in memory.
+
 Assessment finalization preserves complete target context on `MISSED` events while excluding them from valid-event counts. This lets a session with sufficient valid strikes remain assessable without treating missed notes as successful evidence.
 
 The deterministic audio benchmark covers silence, attack+sustain, repeated strikes, low/mid/high synthetic handpan-register tones, matching boundaries, and rejected quality states. The current fixture results are onset precision/recall `1.0` for silence and attack+sustain, `1.0` for four repeated strikes after warmup correction, and pitch error below `0.34` cents across 146.83 Hz, 220 Hz, and 440 Hz tones. These are synthetic PCM regression fixtures, not recordings from a physical instrument.

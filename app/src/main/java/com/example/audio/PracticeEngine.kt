@@ -83,6 +83,7 @@ class PracticeEngine(
     private val deadlineScheduler = DeadlineScheduler(clock)
 
     var onRoundCompleted: ((HandpanPattern, Int, Int) -> Unit)? = null
+    var onAssessmentFinalized: ((com.example.model.FinalizedAssessment) -> Unit)? = null
     var onTimelineBeat: ((PracticeTimelinePosition, List<NoteEvent>, Long) -> Unit)? = null
 
     fun loadPattern(pattern: HandpanPattern) {
@@ -182,6 +183,7 @@ class PracticeEngine(
     fun stop() {
         pause()
         acousticEvaluator.stopAssessment(showSummary = false)
+        acousticEvaluator.finalizedAssessment(System.currentTimeMillis())?.let { onAssessmentFinalized?.invoke(it) }
         acousticEvaluator.setPracticeRunning(false)
         sessionContext = null
         resumeFromBeat = null
@@ -441,6 +443,7 @@ class PracticeEngine(
             if (!currentState.isLoopEnabled && endBar == pattern.bars) {
                 playbackJob = null
                 acousticEvaluator.stopAssessment(showSummary = true)
+                acousticEvaluator.finalizedAssessment(System.currentTimeMillis())?.let { onAssessmentFinalized?.invoke(it) }
                 sessionContext = null
                 _uiState.update {
                     it.copy(

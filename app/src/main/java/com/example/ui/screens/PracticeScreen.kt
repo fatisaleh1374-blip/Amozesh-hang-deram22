@@ -99,6 +99,7 @@ import com.example.ui.theme.HandpanGoldLight
 import com.example.ui.theme.HandpanTerracotta
 import com.example.ui.theme.RestColor
 import com.example.ui.theme.getNoteColor
+import com.example.model.AudioCalibrationState
 
 @Composable
 fun PracticeScreen(
@@ -393,6 +394,30 @@ fun PracticeScreen(
                                 }
                             }
                         }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = when (acousticState.calibration.state) {
+                                AudioCalibrationState.NOT_STARTED -> "آماده‌سازی میکروفن شروع نشده است"
+                                AudioCalibrationState.LISTENING -> "در حال بررسی صدای ساز واقعی..."
+                                AudioCalibrationState.READY -> "صدای ساز واقعی آماده است"
+                                AudioCalibrationState.NO_SIGNAL -> "سیگنال کافی دریافت نشد؛ یک ضربه واضح بزنید"
+                                AudioCalibrationState.TOO_NOISY -> "محیط پر سر و صداست؛ به مکان آرام‌تری بروید"
+                                AudioCalibrationState.OVERLOADED -> "سطح ورودی بیش از حد است؛ میکروفن را دورتر کنید"
+                                AudioCalibrationState.FAILED -> acousticState.calibration.failureReason
+                                    ?: "آماده‌سازی صدا ناموفق بود"
+                            },
+                            color = when (acousticState.calibration.state) {
+                                AudioCalibrationState.READY -> Color(0xFF8BC34A)
+                                AudioCalibrationState.FAILED,
+                                AudioCalibrationState.NO_SIGNAL,
+                                AudioCalibrationState.TOO_NOISY,
+                                AudioCalibrationState.OVERLOADED -> Color(0xFFFFA726)
+                                else -> HandpanGoldLight
+                            },
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                         Spacer(modifier = Modifier.height(10.dp))
                         Row(
                             modifier = Modifier

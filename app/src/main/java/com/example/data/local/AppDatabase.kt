@@ -12,9 +12,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PatternEntity::class,
         PracticeProgressEntity::class,
         LessonProgressEntity::class,
-        RecordingTrackEntity::class
+        RecordingTrackEntity::class,
+        AssessmentEntity::class,
+        EvidenceEntity::class,
+        ProcessedAssessmentEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -22,6 +25,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun practiceProgressDao(): PracticeProgressDao
     abstract fun lessonProgressDao(): LessonProgressDao
     abstract fun recordingTrackDao(): RecordingTrackDao
+    abstract fun assessmentDao(): AssessmentDao
+    abstract fun evidenceDao(): EvidenceDao
+    abstract fun processedAssessmentDao(): ProcessedAssessmentDao
 
     companion object {
         @Volatile
@@ -72,6 +78,62 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `assessments` (
+                        `sessionId` TEXT NOT NULL PRIMARY KEY,
+                        `patternId` TEXT NOT NULL,
+                        `bpm` INTEGER NOT NULL,
+                        `completedAtEpochMs` INTEGER NOT NULL,
+                        `durationMs` INTEGER NOT NULL,
+                        `activeDurationMs` INTEGER NOT NULL,
+                        `validity` TEXT NOT NULL,
+                        `qualityScore` REAL NOT NULL,
+                        `signalQuality` REAL NOT NULL,
+                        `validEventCount` INTEGER NOT NULL,
+                        `eventCount` INTEGER NOT NULL,
+                        `restartCount` INTEGER NOT NULL,
+                        `correctCount` INTEGER NOT NULL,
+                        `wrongCount` INTEGER NOT NULL,
+                        `missedCount` INTEGER NOT NULL,
+                        `extraCount` INTEGER NOT NULL,
+                        `unknownCount` INTEGER NOT NULL,
+                        `timingScore` REAL NOT NULL,
+                        `pitchScore` REAL NOT NULL,
+                        `noteAccuracy` REAL NOT NULL,
+                        `overallPerformance` REAL NOT NULL,
+                        `consistencyScore` REAL NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `assessment_evidence` (
+                        `sessionId` TEXT NOT NULL PRIMARY KEY,
+                        `validity` TEXT NOT NULL,
+                        `validEvidenceCount` INTEGER NOT NULL,
+                        `overallPerformance` REAL NOT NULL,
+                        `timingScore` REAL NOT NULL,
+                        `pitchScore` REAL NOT NULL,
+                        `noteAccuracy` REAL NOT NULL,
+                        `completionRate` REAL NOT NULL,
+                        `missRate` REAL NOT NULL,
+                        `falseStrikeRate` REAL NOT NULL,
+                        `consistencyScore` REAL NOT NULL,
+                        `confidenceScore` REAL NOT NULL,
+                        `rhythmScore` REAL NOT NULL,
+                        `dynamicsScore` REAL NOT NULL,
+                        `speedScore` REAL NOT NULL,
+                        `techniqueScore` REAL NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `processed_assessments` (
+                        `sessionId` TEXT NOT NULL PRIMARY KEY
+                    )
+                """.trimIndent())
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -82,6 +144,7 @@ abstract class AppDatabase : RoomDatabase() {
                 .addMigrations(MIGRATION_1_2)
                 .addMigrations(MIGRATION_2_3)
                 .addMigrations(MIGRATION_3_4)
+                .addMigrations(MIGRATION_4_5)
                 .build()
                 INSTANCE = instance
                 instance

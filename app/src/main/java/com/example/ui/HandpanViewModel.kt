@@ -17,6 +17,7 @@ import com.example.audio.PracticeClock
 import com.example.audio.PracticeEngine
 import com.example.data.local.AppDatabase
 import com.example.data.repository.HandpanRepository
+import com.example.data.local.EvidenceEntity
 import com.example.model.HandpanPattern
 import com.example.model.InstrumentProfile
 import com.example.model.NotationSystem
@@ -88,6 +89,7 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
         database.practiceProgressDao(),
         database.lessonProgressDao(),
         database.recordingTrackDao()
+        , database
     )
 
     val hapticHelper = HapticHelper(context)
@@ -156,8 +158,21 @@ class HandpanViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         practiceEngine.onRoundCompleted = { pattern, bpm, elapsedSeconds ->
+            if (practiceEngine.uiState.value.inputMode == PracticeInputMode.VIRTUAL_HANDPAN) {
+                viewModelScope.launch {
+                    repository.recordPracticeSession(pattern.id, bpm, elapsedSeconds)
+                }
+            }
+        }
+        practiceEngine.onAssessmentFinalized = { assessment ->
+            val evidence = EvidenceEntity.fromDomain(
+                sessionId = assessment.sessionId,
+                validEvidenceCount = assessment.quality.validEventCount,
+                validity = assessment.quality.validity.name,
+                metrics = assessment.metrics
+            )
             viewModelScope.launch {
-                repository.recordPracticeSession(pattern.id, bpm, elapsedSeconds)
+                repository.persistFinalizedAssessment(assessment, evidence)
             }
         }
         val prefs = context.getSharedPreferences("handpan_prefs", Context.MODE_PRIVATE)

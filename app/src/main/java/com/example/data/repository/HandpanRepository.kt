@@ -14,12 +14,19 @@ import com.example.model.PracticeProgress
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import androidx.room.withTransaction
+import com.example.data.local.AppDatabase
+import com.example.data.local.AssessmentEntity
+import com.example.data.local.EvidenceEntity
+import com.example.data.local.ProcessedAssessmentEntity
+import com.example.model.FinalizedAssessment
 
 class HandpanRepository(
     private val patternDao: PatternDao,
     private val practiceProgressDao: PracticeProgressDao,
     private val lessonProgressDao: com.example.data.local.LessonProgressDao,
-    private val recordingTrackDao: com.example.data.local.RecordingTrackDao
+    private val recordingTrackDao: com.example.data.local.RecordingTrackDao,
+    private val database: AppDatabase? = null
 ) {
     /**
      * Flow of all available patterns: Built-in + User custom patterns.
@@ -147,4 +154,34 @@ class HandpanRepository(
     suspend fun getRecordingTrackById(id: String): com.example.audio.RecordedTrack? {
         return recordingTrackDao.getRecordingTrackById(id)?.toDomain()
     }
+
+    suspend fun persistFinalizedAssessment(
+        assessment: FinalizedAssessment,
+        evidence: EvidenceEntity
+    ): Boolean {
+        require(assessment.sessionId == evidence.sessionId)
+        require(assessment.quality.validity == com.example.model.AssessmentSessionValidity.VALID)
+        val db = database ?: return false
+        return db.withTransaction {
+            val inserted = db.assessmentDao().insertIgnore(AssessmentEntity.fromDomain(assessment))
+            if (inserted == -1L) {
+                false
+            } else {
+                db.evidenceDao().insertIgnore(evidence)
+                db.processedAssessmentDao().insertIgnore(ProcessedAssessmentEntity(assessment.sessionId))
+                recordPracticeSession(
+                    patternId = assessment.patternId,
+                    currentBpm = assessment.bpm,
+                    elapsedSeconds = (assessment.quality.activeDurationMs / 1_000L).toInt()
+                )
+                true
+            }
+        }
+    }
+
+    suspend fun getAssessment(sessionId: String): AssessmentEntity? =
+        database?.assessmentDao()?.getBySessionId(sessionId)
+
+    suspend fun getEvidence(sessionId: String): EvidenceEntity? =
+        database?.evidenceDao()?.getBySessionId(sessionId)
 }

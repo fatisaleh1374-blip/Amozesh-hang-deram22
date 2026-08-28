@@ -153,6 +153,25 @@ data class AssessmentSessionSummary(
     val quality: AssessmentSessionQuality
 )
 
+data class FinalizedAssessment(
+    val sessionId: String,
+    val patternId: String,
+    val bpm: Int,
+    val completedAtEpochMs: Long,
+    val quality: AssessmentSessionQuality,
+    val metrics: CanonicalAssessmentMetrics,
+    val score: PracticeScore
+) {
+    init {
+        require(sessionId.isNotBlank())
+        require(patternId.isNotBlank())
+        require(bpm > 0)
+        require(completedAtEpochMs >= 0L)
+        require(quality.sessionId == sessionId)
+        require(quality.finalized)
+    }
+}
+
 data class AssessmentTimelineEvent(
     val eventId: String,
     val sessionId: String,

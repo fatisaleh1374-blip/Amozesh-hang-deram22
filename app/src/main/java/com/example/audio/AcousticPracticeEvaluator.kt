@@ -23,6 +23,8 @@ import com.example.model.AssessmentSessionValidity
 import com.example.model.AssessmentSessionSummary
 import com.example.model.PracticeSessionContext
 import com.example.model.AssessmentSessionValidator
+import com.example.model.AudioCalibrationSession
+import com.example.model.AudioCalibrationSnapshot
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -138,6 +140,7 @@ data class AcousticAssessmentState(
     val consistencyPercentage: Float = 100f,
     val isSummaryDialogVisible: Boolean = false,
     val microphoneState: MicrophoneState = MicrophoneState.MIC_IDLE,
+    val calibration: AudioCalibrationSnapshot = AudioCalibrationSnapshot(),
     val assessmentActive: Boolean = false,
     val canonicalMetrics: CanonicalAssessmentMetrics = CanonicalAssessmentMetrics.EMPTY
 ) {
@@ -187,6 +190,7 @@ class AcousticPracticeEvaluator(
     private var practiceRunning: Boolean = false
     private val targetMatcher = MusicalTargetMatcher()
     private val targetRegistry = TargetRegistry()
+    private val calibrationSession = AudioCalibrationSession()
 
     // Current expected target note events and monotonic window timestamp in nanoseconds
     @Volatile
@@ -228,6 +232,7 @@ class AcousticPracticeEvaluator(
         timeline.bindToSession(context.sessionId)
         beatDurationNanos = MusicalTiming.beatDurationNanos(bpm)
         resetStats()
+        calibrationSession.start()
         practiceRunning = true
 
         assessmentStartTimestampNanos = context.startTimestampNanos
@@ -269,12 +274,14 @@ class AcousticPracticeEvaluator(
         analysisSubscription = analysisSession.acquire(
             scaleConfig = scaleConfig,
             onPitch = { pitch ->
+                val calibration = pitch.audioQuality?.let(calibrationSession::observe)
                 _state.update {
                     it.copy(
                         liveFrequencyHz = pitch.frequencyHz,
                         liveNoteName = pitch.noteName,
                         liveCentsOffset = pitch.centsOffset,
-                        liveDetectedScaleNote = pitch.matchedNoteNumber
+                        liveDetectedScaleNote = pitch.matchedNoteNumber,
+                        calibration = calibration ?: it.calibration
                     )
                 }
             },
@@ -346,6 +353,23 @@ class AcousticPracticeEvaluator(
         }
     }
 
+    fun finalizedAssessment(completedAtEpochMs: Long): com.example.model.FinalizedAssessment? {
+        val summary = finalSummary ?: return null
+        val metrics = com.example.model.SkillEvidenceCalculator.calculateValidEvidence(
+            summary.session,
+            timeline
+        ) ?: return null
+        return com.example.model.FinalizedAssessment(
+            sessionId = summary.session.sessionId,
+            patternId = summary.session.patternId,
+            bpm = (60_000_000_000L / beatDurationNanos).toInt(),
+            completedAtEpochMs = completedAtEpochMs,
+            quality = summary.quality,
+            metrics = metrics,
+            score = PracticeScoreCalculator.calculate(timeline)
+        )
+    }
+
     fun release() {
         analysisSubscription?.close()
         analysisSubscription = null
@@ -397,6 +421,7 @@ class AcousticPracticeEvaluator(
                 averageTimingDeviationMs = 0f,
                 canonicalMetrics = CanonicalAssessmentMetrics.EMPTY,
                 lastFeedback = null,
+                calibration = AudioCalibrationSnapshot(),
                 isSummaryDialogVisible = false
             )
         }

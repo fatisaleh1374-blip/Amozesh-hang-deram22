@@ -14,6 +14,103 @@ enum class AudioFrameStatus {
     INVALID
 }
 
+enum class AudioCalibrationState {
+    NOT_STARTED,
+    LISTENING,
+    READY,
+    NO_SIGNAL,
+    TOO_NOISY,
+    OVERLOADED,
+    FAILED
+}
+
+data class AudioCalibrationSnapshot(
+    val state: AudioCalibrationState = AudioCalibrationState.NOT_STARTED,
+    val validFrameCount: Int = 0,
+    val requiredValidFrames: Int = AudioCalibrationSession.DEFAULT_REQUIRED_VALID_FRAMES,
+    val lastQuality: AudioFrameQuality? = null,
+    val failureReason: String? = null,
+    val lastTimestampNanos: Long? = null
+)
+
+class AudioCalibrationSession(
+    private val requiredValidFrames: Int = DEFAULT_REQUIRED_VALID_FRAMES
+) {
+    init {
+        require(requiredValidFrames > 0)
+    }
+
+    private var snapshot = AudioCalibrationSnapshot(requiredValidFrames = requiredValidFrames)
+
+    fun start(): AudioCalibrationSnapshot {
+        snapshot = AudioCalibrationSnapshot(
+            state = AudioCalibrationState.LISTENING,
+            requiredValidFrames = requiredValidFrames
+        )
+        return snapshot
+    }
+
+    fun observe(quality: AudioFrameQuality): AudioCalibrationSnapshot {
+        if (snapshot.state == AudioCalibrationState.NOT_STARTED || snapshot.state == AudioCalibrationState.READY) {
+            return snapshot
+        }
+        val lastTimestampNanos = snapshot.lastTimestampNanos
+        if (lastTimestampNanos != null && quality.captureTimestampNanos < lastTimestampNanos) {
+            return fail(quality, "Audio timestamps are out of order")
+        }
+
+        when (quality.status) {
+            AudioFrameStatus.VALID -> {
+                val validCount = snapshot.validFrameCount + 1
+                snapshot = snapshot.copy(
+                    state = if (validCount >= requiredValidFrames) AudioCalibrationState.READY
+                    else AudioCalibrationState.LISTENING,
+                    validFrameCount = validCount,
+                    lastQuality = quality,
+                    failureReason = null,
+                    lastTimestampNanos = quality.captureTimestampNanos
+                )
+            }
+            AudioFrameStatus.SILENT,
+            AudioFrameStatus.LOW_SIGNAL -> updateFailureState(quality, AudioCalibrationState.NO_SIGNAL)
+            AudioFrameStatus.NOISY -> updateFailureState(quality, AudioCalibrationState.TOO_NOISY)
+            AudioFrameStatus.OVERLOADED -> updateFailureState(quality, AudioCalibrationState.OVERLOADED)
+            AudioFrameStatus.INVALID -> return fail(quality, "Audio frame is invalid")
+        }
+        return snapshot
+    }
+
+    fun reset(): AudioCalibrationSnapshot {
+        snapshot = AudioCalibrationSnapshot(requiredValidFrames = requiredValidFrames)
+        return snapshot
+    }
+
+    private fun updateFailureState(quality: AudioFrameQuality, state: AudioCalibrationState) {
+        snapshot = snapshot.copy(
+            state = state,
+            validFrameCount = 0,
+            lastQuality = quality,
+            failureReason = null,
+            lastTimestampNanos = quality.captureTimestampNanos
+        )
+    }
+
+    private fun fail(quality: AudioFrameQuality, reason: String): AudioCalibrationSnapshot {
+        snapshot = snapshot.copy(
+            state = AudioCalibrationState.FAILED,
+            validFrameCount = 0,
+            lastQuality = quality,
+            failureReason = reason,
+            lastTimestampNanos = quality.captureTimestampNanos
+        )
+        return snapshot
+    }
+
+    companion object {
+        const val DEFAULT_REQUIRED_VALID_FRAMES = 3
+    }
+}
+
 data class AudioFrameQuality(
     val sampleCount: Int,
     val sampleRateHz: Int,

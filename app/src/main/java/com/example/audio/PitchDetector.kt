@@ -146,7 +146,7 @@ class PitchDetector(
                         audioQuality = audioQuality
                     )
 
-                    if (eval.detectedFreqHz > 0f && listeningGeneration.get() == generation && isListening) {
+                    if (listeningGeneration.get() == generation && isListening) {
                         withContext(Dispatchers.Main) {
                             if (listeningGeneration.get() == generation && isListening) {
                                 onContinuousPitch(result)
