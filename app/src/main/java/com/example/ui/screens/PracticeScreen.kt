@@ -70,6 +70,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -349,7 +352,20 @@ fun PracticeScreen(
                         Surface(
                             shape = CircleShape,
                             color = if (practiceState.inputMode == PracticeInputMode.REAL_HANDPAN) HandpanGold else CharcoalSurfaceVariant,
-                            modifier = Modifier.clickable {
+                            modifier = Modifier
+                                .semantics {
+                                    contentDescription = if (practiceState.inputMode == PracticeInputMode.REAL_HANDPAN) {
+                                        "حالت ساز واقعی، میکروفن فعال"
+                                    } else {
+                                        "حالت ساز مجازی، تمرین لمسی"
+                                    }
+                                    stateDescription = if (practiceState.inputMode == PracticeInputMode.REAL_HANDPAN) {
+                                        "ساز واقعی انتخاب شده است"
+                                    } else {
+                                        "ساز مجازی انتخاب شده است"
+                                    }
+                                }
+                                .clickable {
                                 if (practiceState.inputMode == PracticeInputMode.VIRTUAL_HANDPAN) {
                                     if (!hasMicPermission) {
                                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -395,29 +411,52 @@ fun PracticeScreen(
                             }
                         }
                         Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = when (acousticState.calibration.state) {
-                                AudioCalibrationState.NOT_STARTED -> "آماده‌سازی میکروفن شروع نشده است"
-                                AudioCalibrationState.LISTENING -> "در حال بررسی صدای ساز واقعی..."
-                                AudioCalibrationState.READY -> "صدای ساز واقعی آماده است"
-                                AudioCalibrationState.NO_SIGNAL -> "سیگنال کافی دریافت نشد؛ یک ضربه واضح بزنید"
-                                AudioCalibrationState.TOO_NOISY -> "محیط پر سر و صداست؛ به مکان آرام‌تری بروید"
-                                AudioCalibrationState.OVERLOADED -> "سطح ورودی بیش از حد است؛ میکروفن را دورتر کنید"
-                                AudioCalibrationState.FAILED -> acousticState.calibration.failureReason
-                                    ?: "آماده‌سازی صدا ناموفق بود"
-                            },
-                            color = when (acousticState.calibration.state) {
-                                AudioCalibrationState.READY -> Color(0xFF8BC34A)
-                                AudioCalibrationState.FAILED,
-                                AudioCalibrationState.NO_SIGNAL,
-                                AudioCalibrationState.TOO_NOISY,
-                                AudioCalibrationState.OVERLOADED -> Color(0xFFFFA726)
-                                else -> HandpanGoldLight
-                            },
-                            fontSize = 12.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        val calibrationMessage = when (acousticState.calibration.state) {
+                            AudioCalibrationState.NOT_STARTED -> "آماده شنیدن ساز توست؛ برای شروع یک ضربه واضح بزن."
+                            AudioCalibrationState.LISTENING -> "در حال گوش دادن به ساز واقعی..."
+                            AudioCalibrationState.READY -> "برنامه آماده شنیدن اجرای توست."
+                            AudioCalibrationState.NO_SIGNAL -> "صدای کافی دریافت نشد؛ کمی نزدیک‌تر و واضح‌تر به ساز ضربه بزن."
+                            AudioCalibrationState.TOO_NOISY -> "صدای محیط زیاد است؛ تلویزیون یا موسیقی را کم کن یا جای آرام‌تری پیدا کن."
+                            AudioCalibrationState.OVERLOADED -> "ورودی صدا خیلی قوی است؛ گوشی را کمی از ساز دورتر کن."
+                            AudioCalibrationState.FAILED -> acousticState.calibration.failureReason
+                                ?: "آماده‌سازی صدا انجام نشد؛ دوباره امتحان کن."
+                        }
+                        val calibrationColor = when (acousticState.calibration.state) {
+                            AudioCalibrationState.READY -> Color(0xFF8BC34A)
+                            AudioCalibrationState.FAILED,
+                            AudioCalibrationState.NO_SIGNAL,
+                            AudioCalibrationState.TOO_NOISY,
+                            AudioCalibrationState.OVERLOADED -> Color(0xFFFFA726)
+                            else -> HandpanGoldLight
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics {
+                                    contentDescription = calibrationMessage
+                                    stateDescription = "وضعیت صدای ورودی: $calibrationMessage"
+                                },
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (acousticState.calibration.state == AudioCalibrationState.READY) {
+                                    Icons.Default.CheckCircle
+                                } else {
+                                    Icons.Default.Hearing
+                                },
+                                contentDescription = null,
+                                tint = calibrationColor,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = calibrationMessage,
+                                color = calibrationColor,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                         Spacer(modifier = Modifier.height(10.dp))
                         Row(
                             modifier = Modifier

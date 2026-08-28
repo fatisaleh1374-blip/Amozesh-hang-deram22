@@ -79,6 +79,7 @@ class PracticeEngine(
     private var practiceTimeline: PracticeTimeline? = null
     private var sessionContext: PracticeSessionContext? = null
     private var restartCount: Int = 0
+    private var finalizedCallbackSessionId: String? = null
     private var timelineStartNanos: Long? = null
     private val deadlineScheduler = DeadlineScheduler(clock)
 
@@ -183,7 +184,7 @@ class PracticeEngine(
     fun stop() {
         pause()
         acousticEvaluator.stopAssessment(showSummary = false)
-        acousticEvaluator.finalizedAssessment(System.currentTimeMillis())?.let { onAssessmentFinalized?.invoke(it) }
+        notifyAssessmentFinalized()
         acousticEvaluator.setPracticeRunning(false)
         sessionContext = null
         resumeFromBeat = null
@@ -443,7 +444,7 @@ class PracticeEngine(
             if (!currentState.isLoopEnabled && endBar == pattern.bars) {
                 playbackJob = null
                 acousticEvaluator.stopAssessment(showSummary = true)
-                acousticEvaluator.finalizedAssessment(System.currentTimeMillis())?.let { onAssessmentFinalized?.invoke(it) }
+                notifyAssessmentFinalized()
                 sessionContext = null
                 _uiState.update {
                     it.copy(
@@ -540,6 +541,16 @@ class PracticeEngine(
             scaleConfig = audioEngine.getPitchConfig(),
             bpm = _uiState.value.effectiveBpm
         )
+    }
+
+    @Synchronized
+    private fun notifyAssessmentFinalized() {
+        acousticEvaluator.finalizedAssessment(System.currentTimeMillis())?.let { assessment ->
+            if (assessment.sessionId != finalizedCallbackSessionId) {
+                finalizedCallbackSessionId = assessment.sessionId
+                onAssessmentFinalized?.invoke(assessment)
+            }
+        }
     }
 
     fun setBpm(bpm: Int) {

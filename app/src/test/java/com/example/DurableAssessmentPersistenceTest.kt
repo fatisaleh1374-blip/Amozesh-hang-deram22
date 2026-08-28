@@ -11,6 +11,9 @@ import com.example.model.AssessmentSessionQuality
 import com.example.model.CanonicalAssessmentMetrics
 import com.example.model.FinalizedAssessment
 import com.example.model.PracticeScore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -74,6 +77,30 @@ class DurableAssessmentPersistenceTest {
         assertNotNull(progress)
         assertEquals(2, progress?.practiceCount)
         assertEquals(2, progress?.completedRounds)
+    }
+
+    @Test
+    fun concurrentPersistenceForOneSessionUpdatesProgressOnce() = runBlocking {
+        val assessment = assessment("concurrent-session")
+        val evidence = evidence(assessment)
+
+        val results = coroutineScope {
+            listOf(
+                async(Dispatchers.Default) {
+                    repository.persistFinalizedAssessment(assessment, evidence)
+                },
+                async(Dispatchers.Default) {
+                    repository.persistFinalizedAssessment(assessment, evidence)
+                }
+            ).map { it.await() }
+        }
+
+        assertEquals(listOf(true, false).toSet(), results.toSet())
+        assertEquals(1, database.assessmentDao().observeAll().first().count { it.sessionId == assessment.sessionId })
+        assertNotNull(repository.getEvidence(assessment.sessionId))
+        assertEquals(assessment.sessionId, database.processedAssessmentDao().find(assessment.sessionId))
+        assertEquals(1, repository.allProgress.first()[assessment.patternId]?.practiceCount)
+        assertEquals(1, repository.allProgress.first()[assessment.patternId]?.completedRounds)
     }
 
     private fun assessment(sessionId: String) = FinalizedAssessment(

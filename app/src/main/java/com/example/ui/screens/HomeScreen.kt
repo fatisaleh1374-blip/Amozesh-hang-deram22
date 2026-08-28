@@ -90,6 +90,8 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val appState by viewModel.appUiState.collectAsStateWithLifecycle()
+    val featuredPattern = BuiltinExercises.ALL_BUILTIN_PATTERNS.getOrNull(2)
+        ?: BuiltinExercises.ALL_BUILTIN_PATTERNS.first()
     var tappedNoteInHome by remember { mutableStateOf(-1) }
 
     LazyColumn(
@@ -259,8 +261,7 @@ fun HomeScreen(
                     .clip(RoundedCornerShape(22.dp))
                     .border(1.dp, HandpanBronze.copy(alpha = 0.5f), RoundedCornerShape(22.dp))
                     .clickable {
-                        val starterPattern = BuiltinExercises.ALL_BUILTIN_PATTERNS.first()
-                        onStartPractice(starterPattern)
+                        onStartPractice(featuredPattern)
                     }
                     .testTag("hero_practice_card"),
                 colors = CardDefaults.cardColors(containerColor = CharcoalSurface)
@@ -300,7 +301,7 @@ fun HomeScreen(
                             }
 
                             Text(
-                                text = "۶۰ BPM",
+                                text = "${featuredPattern.bpm} BPM",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = HandpanBronze
                             )
@@ -309,7 +310,7 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Text(
-                            text = "تمرین ۳: آرپژ سه‌تایی (۱ - ۳ - ۵ - ۳)",
+                            text = featuredPattern.title,
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White,
                             fontWeight = FontWeight.Bold
@@ -318,7 +319,7 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.height(6.dp))
 
                         Text(
-                            text = "الگوی بنیادین و گوش‌نواز هنگدرام برای تقویت هماهنگی دست‌ها و تمرین ریتم ۴/۴.",
+                            text = "با ساز واقعی شروع کن؛ برنامه ضربه‌هایت را از طریق میکروفن می‌شنود و همراهت پیش می‌رود.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFD6C8BB),
                             lineHeight = 18.sp
@@ -328,8 +329,7 @@ fun HomeScreen(
 
                         Button(
                             onClick = {
-                                val pattern = BuiltinExercises.ALL_BUILTIN_PATTERNS[2] // Arpeggio 1-3-5-3
-                                onStartPractice(pattern)
+                                onStartPractice(featuredPattern)
                             },
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = HandpanGold),
@@ -343,6 +343,48 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        // Quick Actions Grid (Metronome, Masterclass, Ambience, Scales, Looper, Guide)
+        item {
+            val featuredProgress = viewModel.practiceStats.collectAsStateWithLifecycle().value[featuredPattern.id]
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, CharcoalBorder, RoundedCornerShape(16.dp))
+                    .testTag("practice_progress_card"),
+                colors = CardDefaults.cardColors(containerColor = CharcoalDark)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Psychology,
+                        contentDescription = null,
+                        tint = HandpanGold,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "پیشرفت تمرین",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = featuredProgress?.let {
+                                "${it.practiceCount} بار تمرین کرده‌ای • ${it.completedRounds} دور کامل"
+                            } ?: "هنوز رکوردی ثبت نشده؛ اولین تمرینت را شروع کن.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.LightGray
+                        )
                     }
                 }
             }
